@@ -1,0 +1,9 @@
+# === Streamlit Community Cloud 部署用 — 精简版 ===
+streamlit>=1.40
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+shap>=0.44
+plotly>=5.15
+openai>=1.0
+joblib>=1.3
