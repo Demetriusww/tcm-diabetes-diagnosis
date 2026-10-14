@@ -75,39 +75,39 @@ def create_shap_explainer(model):
 
 def save_model_and_explainer(model, explainer, save_dir='models'):
     """
-    保存模型和解释器
+    保存模型（解释器只做兼容保留，运行时一律重建）
     """
     os.makedirs(save_dir, exist_ok=True)
-    
+
     with open(os.path.join(save_dir, 'best_model.pkl'), 'wb') as f:
         pickle.dump(model, f)
-    
-    with open(os.path.join(save_dir, 'shap_explainer.pkl'), 'wb') as f:
-        pickle.dump(explainer, f)
-    
-    print(f"模型和解释器已保存到 {save_dir}/")
+
+    print(f"模型已保存到 {save_dir}/（SHAP 解释器不再落盘，运行时由模型重建）")
 
 
 def load_model_and_explainer(model_dir='models'):
     """
-    加载模型和解释器
+    加载模型，并基于该模型现场构建 SHAP 解释器
+
+    解释器不再从 shap_explainer.pkl 读取：pickle 出来的 TreeExplainer 会绑定
+    生成它的环境中的 shap / numba / numpy 私有模块路径与版本，换一台机器
+    （本地 <-> Streamlit Cloud）加载时就会 ModuleNotFoundError，也可能与
+    当前模型脱节导致 SHAP 值异常。TreeExplainer 由模型重建是确定性的，
+    200 棵树量级只需数百毫秒，且外层有 @st.cache_resource 只执行一次。
     """
     model_path = os.path.join(model_dir, 'best_model.pkl')
-    explainer_path = os.path.join(model_dir, 'shap_explainer.pkl')
-    
-    if os.path.exists(model_path) and os.path.exists(explainer_path):
+
+    if os.path.exists(model_path):
         with open(model_path, 'rb') as f:
             model = pickle.load(f)
-        with open(explainer_path, 'rb') as f:
-            explainer = pickle.load(f)
-        return model, explainer
     else:
         # 如果文件不存在，创建模拟模型
         print("未找到已保存的模型，正在创建模拟模型...")
         model = create_mock_model()
-        explainer = create_shap_explainer(model)
-        save_model_and_explainer(model, explainer, model_dir)
-        return model, explainer
+        save_model_and_explainer(model, None, model_dir)
+
+    explainer = create_shap_explainer(model)
+    return model, explainer
 
 
 def predict_syndrome(model, input_features):
@@ -152,7 +152,16 @@ def get_shap_values(explainer, input_features):
     if len(input_features.shape) == 1:
         input_features = input_features.reshape(1, -1)
 
-    shap_out = explainer.shap_values(input_features)
+    if hasattr(explainer, 'shap_values'):
+        shap_out = explainer.shap_values(input_features)
+    else:
+        # 新版 SHAP 推荐写法：explainer(X).values
+        shap_out = explainer(input_features)
+
+    # 不同 SHAP 版本可能返回 Explanation 对象，统一取其数值数组
+    if not isinstance(shap_out, (list, np.ndarray)) and hasattr(shap_out, 'values'):
+        shap_out = shap_out.values
+
     result = {}
 
     # ------------------------------------------------------

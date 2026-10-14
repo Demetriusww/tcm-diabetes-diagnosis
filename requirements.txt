@@ -1,8 +1,11 @@
-# === Streamlit Community Cloud 部署用 — 精简版 ===
+# === Streamlit Community Cloud deployment - minimal set ===
 streamlit>=1.40
-numpy>=1.24
+# numpy 1.x and 2.x both work with scikit-learn >= 1.4
+numpy>=1.24,<3
 pandas>=2.0
-scikit-learn>=1.3
+# >=1.4 required: models/best_model.pkl uses the tree node dtype with missing_go_to_left
+scikit-learn>=1.4
+# SHAP explainer is rebuilt from the model at runtime, no pickled explainer needed
 shap>=0.44
 plotly>=5.15
 openai>=1.0
