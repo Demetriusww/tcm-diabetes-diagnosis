@@ -136,53 +136,85 @@ st.markdown("""
   text-rendering: optimizeLegibility;
 }
 
-/* ========== 全局背景（宣纸暖白 × 淡竹青纹理） ========== */
+/* ========== 全局背景（青瓷竹青 × 宣纸米白 × 淡赭纹理） ========== */
 html, body, .stApp, [data-testid="stAppViewContainer"] {
-    background-color: #f4f5ef;
+    background-color: #edf0e5;
 }
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stMain"] {
-    background-color: #f4f5ef !important;
+    background-color: #f1f1e7 !important;
     background-image:
       repeating-linear-gradient(
         0deg,
-        rgba(103,82,48,0.018) 0,
-        rgba(103,82,48,0.018) 1px,
+        rgba(103,82,48,0.022) 0,
+        rgba(103,82,48,0.022) 1px,
         transparent 1px,
-        transparent 5px
+        transparent 6px
       ),
       repeating-linear-gradient(
         90deg,
-        rgba(46,125,50,0.018) 0,
-        rgba(46,125,50,0.018) 1px,
+        rgba(46,125,50,0.026) 0,
+        rgba(46,125,50,0.026) 1px,
         transparent 1px,
-        transparent 72px
+        transparent 88px
       ),
       linear-gradient(
-        180deg,
-        rgba(231,242,232,0.74) 0%,
-        rgba(247,247,241,0.76) 36%,
-        rgba(249,245,235,0.86) 100%
+        132deg,
+        #e8f0e5 0%,
+        #f2f2e7 46%,
+        #f6eddf 100%
       ) !important;
-    border-left: 1px solid rgba(46,125,50,0.055);
-    box-shadow: inset 18px 0 34px -34px rgba(27,94,32,0.20);
+    border-left: 1px solid rgba(46,125,50,0.07);
+    box-shadow:
+      inset 22px 0 38px -38px rgba(27,94,32,0.24),
+      inset 0 1px 0 rgba(255,255,255,0.55);
     padding-top: 1.6rem;
     padding-bottom: 4rem;
 }
 [data-testid="stHeader"] {
-    background: rgba(246,247,240,0.82) !important;
+    background: rgba(239,242,231,0.86) !important;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
 }
 /* 隐藏 Streamlit 默认菜单、部署按钮和 GitHub / Fork 入口 */
 #MainMenu,
 [data-testid="stMainMenu"],
-[data-testid="stToolbar"],
+[data-testid="stToolbarActions"],
 [data-testid="stDeployButton"],
+[data-testid="stAppDeployButton"],
 [data-testid="stStatusWidget"],
 .stAppDeployButton {
     display: none !important;
     visibility: hidden !important;
+}
+/* 保留侧边栏展开入口：收起后可通过顶部“展开导航”重新打开 */
+[data-testid="stExpandSidebarButton"] {
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    align-items: center;
+    gap: 6px;
+    min-width: 40px !important;
+    min-height: 38px !important;
+    padding: 6px 12px !important;
+    border: 1px solid rgba(27,94,32,0.24) !important;
+    border-radius: 10px !important;
+    background: rgba(255,255,255,0.92) !important;
+    color: #1b5e20 !important;
+    box-shadow: 0 3px 12px rgba(27,94,32,0.10) !important;
+}
+[data-testid="stExpandSidebarButton"]:hover {
+    background: #e8f4e9 !important;
+    border-color: rgba(27,94,32,0.42) !important;
+}
+[data-testid="stExpandSidebarButton"]::after {
+    content: "展开导航";
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 750;
+    letter-spacing: 0;
+    color: #1b5e20;
+    white-space: nowrap;
 }
 [data-testid="stAppViewContainer"] > .main > [data-testid="block-container"],
 [data-testid="stMain"] [data-testid="block-container"] {
