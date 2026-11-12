@@ -1,12 +1,13 @@
 # === Streamlit Community Cloud deployment - minimal set ===
-streamlit>=1.40
-# numpy 1.x and 2.x both work with scikit-learn >= 1.4
-numpy>=1.24,<3
+# app.py uses Streamlit 1.50 APIs such as width="stretch".
+streamlit>=1.50,<2
+# best_model.pkl was serialized with NumPy 2.x and scikit-learn 1.8.0.
+# Keep these aligned with the model to avoid pickle ModuleNotFoundError at startup.
+numpy>=2.0,<3
 pandas>=2.0
-# >=1.4 required: models/best_model.pkl uses the tree node dtype with missing_go_to_left
-scikit-learn>=1.4
+scikit-learn==1.8.0
 # SHAP explainer is rebuilt from the model at runtime, no pickled explainer needed
-shap>=0.44
+shap>=0.49,<1
 plotly>=5.15
 openai>=1.0
 joblib>=1.3

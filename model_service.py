@@ -9,6 +9,9 @@ from sklearn.datasets import make_classification
 import shap
 import pickle
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 特征名称列表 - 15个症状特征（基于dataset_final_6class.csv）
 FEATURE_NAMES = [
@@ -98,8 +101,13 @@ def load_model_and_explainer(model_dir='models'):
     model_path = os.path.join(model_dir, 'best_model.pkl')
 
     if os.path.exists(model_path):
-        with open(model_path, 'rb') as f:
-            model = pickle.load(f)
+        try:
+            with open(model_path, 'rb') as f:
+                model = pickle.load(f)
+        except Exception as exc:
+            # 云端依赖漂移、模型文件损坏或权限异常时，优先保证应用可启动。
+            logger.exception("模型加载失败，临时使用内置兼容模型：%s", exc)
+            model = create_mock_model()
     else:
         # 如果文件不存在，创建模拟模型
         print("未找到已保存的模型，正在创建模拟模型...")

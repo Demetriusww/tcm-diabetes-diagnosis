@@ -31,7 +31,9 @@ from __future__ import annotations
 import os
 import json
 import logging
+import socket
 from typing import Optional
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -125,44 +127,37 @@ def get_llm_config() -> dict:
 # ======================================================================
 SYSTEM_PROMPT = """\
 【角色定位】
-你是一名资深中医临床专家 + 科普教育工作者，服务于 2 型糖尿病中医证型的科研教学场景。
-患者的证型预测来自一个**训练好的机器学习模型**（随机森林 + LightGBM / EBM），
-该模型基于 15 项临床特征对六类中医证型进行多分类。
-你**只做科普解读**，不做预测。
+你是一名熟悉《中医基础理论》《中医诊断学》《中医内科学》的中医教研助手，服务于 2 型糖尿病中医证型的科研教学场景。
+证型预测由已训练好的随机森林 / LightGBM(EBM) 模型完成，你只解释模型结果和中医理论，不重新预测证型。
 
-【硬红线（不可逾越）】
-  ✋ 不得重新独立预测证型、不得推翻机器学习模型给出的主证型结论；
-  ✋ 不得开具任何具体处方、剂量、药物名称；
-  ✋ 不得输出"确诊""明确诊断""建议立即就医"等临床决策性词汇；
-  ✋ 不得声称本解读可替代执业中医师的四诊合参与辨证论治。
+【安全硬红线（不可逾越）】
+1. 不得重新预测证型，不得推翻机器学习模型给出的主证型结论。
+2. 不得开具处方，不得推荐具体药物，不得输出任何药物剂量、克数、用量或煎服法。
+3. 不得输出“确诊”“明确诊断”“建议立即就医”等临床决策性表述。
+4. 本解读不能替代执业中医师四诊合参和辨证论治。
 
-【输出结构（必须按下列 4 段组织，每段前加小标题）】
----
-① SHAP 通俗翻译 —— 哪些症状"支持/不支持"当前证型
-   • 用通俗语言解释"SHAP 值"是什么（一个特征对模型判证的贡献度）；
-   • 正向贡献（SHAP>0）= 该特征"支持"当前证型；
-     负向贡献（SHAP<0）= 该特征"不支持"当前证型，说明模型对此存疑；
-   • 结合本患者 Top 5 正向 + Top 3 负向特征，用 3~5 句解释为什么模型倾向这个证型。
+【理论约束（必须执行）】
+1. 必须以《中医基础理论》《中医诊断学》《中医内科学》的证候、病机、舌脉理论解释本病例。
+2. 第 ①②③ 段每一段都必须以“根据中医理论，”作为开头，先讲病机与四诊依据，再解释模型线索。
+3. 不得单纯罗列 SHAP 数值。SHAP 最多作为辅助证据，不要连续出现多个 ± 小数；应把它们翻译成“哪些症状支持主证、哪些症状提示兼证或边界”。
+4. 必须结合患者当前已有症状与舌脉，不得只复述模型概率。
 
-② 本证型辨证要点 & 相似证鉴别（面向医学生）
-   • 简述本证型的核心病机、典型舌脉、治法原则；
-   • 对比 1~2 个概率次高的相似证型，列出 3 个左右的鉴别要点；
-   • 点出本患者概率分布里"第二候选证"的存在意味着什么（兼夹？模型边界？）。
+【固定四段结构（每段必须有小标题）】
+① SHAP 通俗翻译与四诊证据
+   说明模型为何倾向当前主证；把正向、负向 SHAP 翻译为支持证据与存疑证据，并联系症状和舌脉。
 
-③ 饮食 · 起居 · 情志科普调理建议
-   • 饮食 2~3 条（给具体可操作的例子，如"主食中杂粮占 1/3"）；
-   • 起居 2 条（作息、运动强度与频次）；
-   • 情志 1~2 条（本证型常见的情绪倾向与调节方法）。
+② 本证型病机与相似证鉴别
+   依据教材理论说明核心病机、病位、虚实寒热和典型舌脉；与第二候选证型作 2~3 点鉴别；解释次证概率提示兼证还是模型边界。
 
-④ 免责声明（每篇解读必须完整写出）
-   ⚠️ **本内容仅供科研教学参考，不构成任何诊疗依据。**
-   具体诊断与治疗请务必由执业中医师四诊合参后确定，切勿自行判断或延误就医。
----
+③ 饮食、起居与情志调摄
+   给出不含药物、不含剂量的生活调摄建议，并按本证型病机解释其依据。
 
-【文风 & 篇幅】
-  • 全文中文，面向普通患者（穿插少量医学生友好术语并附通俗解释）；
-  • 4 段合计 500~900 字，每段用「小标题」或项目符号组织；
-  • 必须**完整写出 ④ 免责声明**作为全文的最后一段。
+④ 免责声明
+   ⚠️ 本内容仅供科研教学参考，不构成任何诊疗依据。
+   具体诊断与治疗须由执业中医师四诊合参后确定，切勿自行判断、照方抓药或延误就医。
+
+【文风与篇幅】
+全文中文，500~900 字。术语首次出现时附一句通俗解释。不要写空泛套话，不要出现药物名称或剂量。
 """
 
 
@@ -360,8 +355,8 @@ def call_llm_chat(messages: list, config: Optional[dict] = None) -> str:
     client = OpenAI(
         api_key=config["api_key"],
         base_url=config["base_url"],
-        timeout=45.0,
-        max_retries=1,
+        timeout=20.0,
+        max_retries=0,
     )
     try:
         resp = client.chat.completions.create(
@@ -389,42 +384,119 @@ def call_llm(system_prompt: str, user_prompt: str, config: Optional[dict] = None
 
 
 # ======================================================================
-# 4. 规则化降级（不依赖外部 API）
+# 4. 本地 Mock / 规则化降级（不依赖外部 API）
 # ======================================================================
+_SYNDROME_THEORY = {
+    "气阴两虚": {
+        "pathogenesis": "气阴两耗，脾气亏虚则运化无力，肺胃阴虚则津液不能输布，久则累及肾元。",
+        "differentiation": "重点与阴虚热盛鉴别：前者多见神疲乏力、自汗、脉细弱；后者多见五心烦热、舌红少津、脉细数。",
+        "care": "饮食宜清淡甘润，主食粗细搭配；活动以八段锦、太极拳等柔和运动为主，避免过劳和熬夜。",
+    },
+    "痰热互结": {
+        "pathogenesis": "痰湿内蕴，郁久化热，痰热阻滞中焦，气机升降失司，故见口苦、苔黄腻及脘腹不适。",
+        "differentiation": "重点与肝胃郁热鉴别：痰热证以形体肥胖、苔黄腻、胸闷痰多为要；肝胃郁热证以烦躁易怒、胁胀反酸为要。",
+        "care": "饮食宜清淡，少食肥甘甜腻，主食粗细搭配；居住环境宜干爽，循序渐进增加活动量。",
+    },
+    "肝肾阴虚": {
+        "pathogenesis": "肝肾阴液不足，精血不能上荣目窍、下养腰膝，虚热内生，故见视物模糊、腰膝酸软、舌红脉细。",
+        "differentiation": "重点与气阴两虚鉴别：肝肾阴虚以腰膝酸软、目涩耳鸣、舌红少苔为主；气阴两虚以倦怠自汗、气短为主。",
+        "care": "注意用眼休息，避免熬夜和过度劳神；饮食宜清润，保持情绪平和，运动以舒缓有氧活动为主。",
+    },
+    "热盛伤津": {
+        "pathogenesis": "燥热炽盛，灼伤肺胃津液，胃热腐熟太过则多食易饥，热结肠道则便干，热盛津伤则口渴明显。",
+        "differentiation": "重点与肝胃郁热鉴别：热盛伤津以口渴、多食、便结、舌红苔燥为主；肝胃郁热以情志不畅、口苦胁胀、脉弦为要。",
+        "care": "避免辛辣煎炸和温燥食物，适量饮水；运动宜避开高温时段，避免大汗进一步耗伤津液。",
+    },
+    "肝胃郁热": {
+        "pathogenesis": "肝气郁结化火，横逆犯胃，肝胃同病；肝火上扰则心烦易怒、口苦，胃热炽盛则多食易饥、便结。",
+        "differentiation": "重点与痰热互结鉴别：肝胃郁热以情绪波动、口苦反酸、胁胀为要；痰热互结以肥胖、苔黄腻、胸闷痰多为要。",
+        "care": "重视情志调畅，避免暴怒和长期压抑；饮食定时适量，少食辛辣油腻，可用舒缓运动帮助疏解压力。",
+    },
+    "阴阳两虚": {
+        "pathogenesis": "病久阴损及阳，阴阳俱虚，命门温煦不足则畏寒肢冷，水湿不化则下肢浮肿，肾失固摄则夜尿增多。",
+        "differentiation": "重点与肝肾阴虚鉴别：阴阳两虚兼见畏寒肢冷、浮肿、便溏；肝肾阴虚以虚热、目涩、舌红少苔为主。",
+        "care": "注意腰腹和足部保暖，避免生冷饮食；活动宜温和，避免大汗耗气，出现明显水肿时应及时接受专业评估。",
+    },
+}
+
+
+def _active_feature_names(symptoms: dict, tongue_pulse: dict, feature_names: list) -> list:
+    """按当前输入提取阳性特征，保留原有特征顺序。"""
+    merged = {**(symptoms or {}), **(tongue_pulse or {})}
+    return [
+        name for name in feature_names
+        if float(merged.get(name, 0.0)) >= 0.3
+    ]
+
+
 def rule_based_interpretation(
     probabilities: dict,
     shap_dict: dict,
     feature_names: list,
+    symptoms: Optional[dict] = None,
+    tongue_pulse: Optional[dict] = None,
 ) -> str:
-    """API 不可用时的本地规则化解读。内容保持与 LLM 版本同构，便于替换。"""
+    """本地 Mock：按教材病机生成四段式标准解读，API 不可用时立即返回。"""
     sorted_probs = sorted(probabilities.items(), key=lambda kv: kv[1], reverse=True)
     main_syn, main_prob = sorted_probs[0]
-    sec_syn, sec_prob = sorted_probs[1] if len(sorted_probs) > 1 else (None, 0.0)
+    sec_syn, sec_prob = sorted_probs[1] if len(sorted_probs) > 1 else ("—", 0.0)
+    theory = _SYNDROME_THEORY.get(main_syn, {})
 
-    # Top-4 正向 SHAP
     shap_arr = np.asarray(shap_dict.get(main_syn, np.zeros(len(feature_names)))).flatten()
     if len(shap_arr) < len(feature_names):
         shap_arr = np.pad(shap_arr, (0, len(feature_names) - len(shap_arr)))
-    pos_idx = np.argsort(-shap_arr)[:4]
+    pos_idx = [int(i) for i in np.argsort(-shap_arr)[:5] if shap_arr[i] > 0]
+    neg_idx = [int(i) for i in np.argsort(shap_arr)[:3] if shap_arr[i] < 0]
+    positive = [feature_names[i] for i in pos_idx]
+    negative = [feature_names[i] for i in neg_idx]
 
-    key_features = [feature_names[int(i)] for i in pos_idx if shap_arr[i] > 0]
-    features_str = "、".join(key_features) if key_features else "多项特征综合作用"
+    active = _active_feature_names(symptoms or {}, tongue_pulse or {}, feature_names)
+    active_text = "、".join(active[:8]) if active else "当前阳性四诊特征较少"
+    positive_text = "、".join(positive[:4]) if positive else "多项综合特征"
+    negative_text = "、".join(negative[:3]) if negative else "未见明显反向证据"
 
-    confidence_desc = "很高" if main_prob >= 0.65 else ("较高" if main_prob >= 0.45 else "中等，需结合其他检查综合判断")
+    if main_prob >= 0.60:
+        confidence = "较高"
+    elif main_prob >= 0.30:
+        confidence = "中等，仍需结合兼证与四诊合参"
+    else:
+        confidence = "偏低，应把结果作为线索而非结论"
 
-    lines = []
-    lines.append(f"**主证型**：{main_syn}（机器学习模型置信度 {main_prob:.1%}，把握{confidence_desc}）。")
-    lines.append("")
-    lines.append(f"**关键依据**：模型判定主要依据【{features_str}】等特征。")
-    lines.append(f"  - 其中贡献最大的特征分别为：{key_features[0] if len(key_features) > 0 else '—'}、"
-                 f"{key_features[1] if len(key_features) > 1 else '—'}。")
-    if sec_syn and sec_prob >= main_prob * 0.6:
-        lines.append(f"  - 次证型【{sec_syn}】概率也不低（{sec_prob:.1%}），提示存在兼夹可能，"
-                     f"实际辨证时可重点关注其对应症状的轻重变化。")
-    lines.append("")
-    lines.append("**解读说明**：本解读由规则化模板生成（未接入大模型 API）。"
-                 "如需更细致的个性化解读，请联系系统管理员在 .streamlit/secrets.toml 中配置 LLM。")
+    lines = [
+        "### 一、SHAP 通俗翻译与四诊证据",
+        f"根据中医理论，本病例采集到的阳性表现为{active_text}。机器学习模型据此倾向"
+        f"**{main_syn}证**，主证匹配度为 {main_prob:.1%}，判断把握{confidence}。",
+        f"从可解释性结果看，{positive_text}对主证形成支持；{negative_text}"
+        "则提示仍需辨析兼夹或模型边界。这里不逐一罗列贡献小数，而是把 SHAP 理解为："
+        "哪些四诊信息在推动模型作出当前判断。",
+        "",
+        "### 二、本证型病机与相似证鉴别",
+        f"根据中医理论，{main_syn}证的核心病机可概括为：{theory.get('pathogenesis', '证候由气血阴阳失调、脏腑功能失常所致。')}",
+        f"本病例第二候选为**{sec_syn}证**（{sec_prob:.1%}）。{theory.get('differentiation', '两种证候可能兼夹，应结合舌脉和症状轻重进一步辨析。')}"
+        "次证概率存在并不等于同时确诊两种证型，更可能提示兼证、病程阶段变化或模型对边界样本的不确定性。",
+        "",
+        "### 三、饮食、起居与情志调摄",
+        f"根据中医理论，{main_syn}证的调摄应围绕其病机展开。{theory.get('care', '饮食宜清淡有节，起居规律，避免过劳。')}"
+        "建议观察症状变化并记录血糖监测结果；若出现明显不适或指标异常，应由专业人员评估。",
+        "",
+        "### 四、免责声明",
+        "⚠️ **本内容仅供科研教学参考，不构成任何诊疗依据。**",
+        "具体诊断与治疗须由执业中医师四诊合参后确定，切勿自行判断、照方抓药或延误就医。",
+    ]
     return "\n".join(lines)
+
+
+def _api_endpoint_reachable(base_url: str, timeout: float = 0.75) -> bool:
+    """调用前快速探测端点，断网时立即切换到本地 Mock，避免路演长时间等待。"""
+    try:
+        parsed = urlparse(base_url)
+        if not parsed.hostname:
+            return True
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 # ======================================================================
@@ -451,13 +523,25 @@ def generate_llm_interpretation(
     """
     config = get_llm_config()
 
-    # ---- 未启用或未配置 → 直接走规则化降级 ----
+    # ---- 未启用、未配置或端点不可达 → 直接走本地四段式 Mock ----
     if not use_llm or not config.get("configured"):
         return {
-            "text": rule_based_interpretation(probabilities, shap_dict, feature_names),
-            "source": "rule",
+            "text": rule_based_interpretation(
+                probabilities, shap_dict, feature_names, symptoms, tongue_pulse
+            ),
+            "source": "mock",
             "configured": config.get("configured", False),
             "error": None,
+        }
+
+    if not _api_endpoint_reachable(config.get("base_url", "")):
+        return {
+            "text": rule_based_interpretation(
+                probabilities, shap_dict, feature_names, symptoms, tongue_pulse
+            ),
+            "source": "mock",
+            "configured": True,
+            "error": "网络连接异常，已自动切换到本地标准解读。",
         }
 
     try:
@@ -477,11 +561,17 @@ def generate_llm_interpretation(
             "error": None,
         }
     except Exception as e:
-        logger.exception("LLM 调用异常，回退到规则化解读")
+        logger.exception("LLM 调用异常，回退到本地标准解读")
         friendly = _classify_api_error(e)
+        mock_text = rule_based_interpretation(
+            probabilities, shap_dict, feature_names, symptoms, tongue_pulse
+        )
         return {
-            "text": f"⚠️ {friendly}\n\n---\n\n" + rule_based_interpretation(probabilities, shap_dict, feature_names),
-            "source": "rule",
+            "text": (
+                f"> 系统提示：{friendly} 已自动切换到本地标准解读。\n\n"
+                + mock_text
+            ),
+            "source": "mock",
             "configured": True,
             "error": friendly,
         }
@@ -492,7 +582,7 @@ def generate_llm_interpretation(
 # ======================================================================
 CHAT_SYSTEM_BASE = """\
 【角色定位】
-你是一名资深中医临床专家 + 科普教育工作者，正在与 2 型糖尿病患者（或医学生）进行多轮对话。
+你是一名熟悉《中医基础理论》《中医诊断学》《中医内科学》的中医教研助手，正在与 2 型糖尿病患者（或医学生）进行多轮对话。
 本对话中的证型预测来自**随机森林 + LightGBM(EBM) 机器学习模型**，
 模型基于 15 项临床特征对六类中医证型做多分类，**你只做科普解读，不做预测**。
 
@@ -503,13 +593,13 @@ CHAT_SYSTEM_BASE = """\
   ✋ 不得声称本解读可替代执业中医师的四诊合参与辨证论治。
 
 【输出要求（每次回答都要遵守）】
-  1) 回答必须**结合已提供的本患者数据**（症状、舌脉、证型概率、SHAP）来答，
-     不要空泛套话；追问"鉴别""饮食""调理"等时优先引用本患者数据做例子；
-  2) SHAP 相关问题：↑ = 正向（支持该证型），↓ = 负向（不支持该证型），用通俗比喻解释；
-  3) 每次回答末尾**必须出现免责声明**（可简写一行）：
+  1) 每次回答必须以“根据中医理论，”开头，并依据《中医基础理论》《中医诊断学》或《中医内科学》解释病机；
+  2) 回答必须**结合已提供的本患者症状、舌脉、证型概率与 SHAP 线索**，不得空泛套话，也不得单纯罗列 SHAP 数值；
+  3) SHAP 相关问题：↑ = 正向（支持该证型），↓ = 负向（不支持该证型），应翻译成四诊证据，而非连续报数；
+  4) 每次回答末尾**必须出现免责声明**（可简写一行）：
      ⚠️ 本内容仅供科研教学参考，不构成任何诊疗依据；
-  4) 全文中文，150~400 字，必要时分条，面向普通患者+医学生；
-  5) 追问超出中医科普范围（如生活琐事、无关学科）时礼貌引导回到中医证型相关问题。
+  5) 全文中文，150~400 字，必要时分条，面向普通患者+医学生；
+  6) 追问超出中医科普范围（如生活琐事、无关学科）时礼貌引导回到中医证型相关问题。
 """
 
 
@@ -603,6 +693,8 @@ def chat_with_patient_data(
 
     if not config.get("configured"):
         raise RuntimeError("LLM 未配置，请在 .streamlit/secrets.toml 中填写 api_key / base_url / model。")
+    if not _api_endpoint_reachable(config.get("base_url", "")):
+        raise RuntimeError("网络连接异常，已切换到本地标准解读。")
 
     # --- 拼装 messages ---
     valid_history = []
@@ -632,34 +724,38 @@ def chat_with_patient_data(
 # ----------------------------------------------------------------------
 _FOLLOWUP_TEMPLATES = {
     "鉴别": (
-        "关于「{q}」，这是一个很好的辨证问题。中医讲究四诊合参，"
+        "根据中医理论，关于「{q}」，中医辨析证候强调四诊合参、病机互参。"
         "气阴两虚 vs 阴虚热盛的常见鉴别点包括：\n"
         "• 舌象：气阴两虚多见舌淡少苔，阴虚热盛多见舌红少苔或无苔；\n"
         "• 脉象：气阴两虚多偏细弱，阴虚热盛多偏细数；\n"
         "• 畏寒与否：气阴两虚常伴畏寒肢冷，阴虚热盛常伴五心烦热。\n"
-        "以上是通用鉴别要点，具体还需结合患者的其他症状综合判断。"
+        "以上是通用鉴别思路，具体仍需结合患者的其他症状综合判断。"
     ),
     "饮食": (
-        "关于饮食禁忌，无论哪种证型的糖尿病患者，以下原则通用：\n"
-        "• 控制总热量，主食定量（每餐约 100g 生米），杂粮占 1/3 以上；\n"
+        "根据中医理论，饮食调摄应结合证候虚实寒热，以下原则可作为教学参考：\n"
+        "• 控制总热量，主食定量，杂粮占一定比例；\n"
         "• 低 GI 食物：燕麦、藜麦、糙米、绿叶蔬菜优先；\n"
-        "• 避免精制糖、油炸、高盐（≤5g/日）；\n"
-        "• 每日饮水 1500~2000ml，酒/甜饮尽量不碰；\n"
+        "• 避免精制糖、油炸和高盐食物，酒和甜饮尽量不碰；\n"
+        "• 适量饮水，根据口渴、汗出和活动量调整；\n"
         "• 气阴两虚者可适度吃山药、莲子、枸杞；阴虚热盛者可吃银耳、百合、冬瓜。"
     ),
     "运动": (
-        "关于运动建议，糖尿病患者推荐：\n"
+        "根据中医理论，动静有度、劳逸结合有助于调畅气血，糖尿病患者可参考：\n"
         "• 中等强度有氧运动：快走、慢跑、游泳、骑车，每周 150 分钟以上；\n"
         "• 餐后 30~60 分钟适度散步，有助于控制餐后血糖；\n"
-        "• 避免空腹剧烈运动（防止低血糖）；\n"
+        "• 阴虚或气阴不足者避免大汗淋漓，阳虚者宜注意保暖；\n"
         "• 合并心血管疾病时先咨询医生再运动。"
     ),
     "默认": (
-        "（当前处于规则化降级模式，未接入大模型 API，只能回答有限范围的问题。）\n"
+        "根据中医理论，当前处于本地标准解读模式，未接入大模型 API，只能回答有限范围的问题。\n"
         "你问的「{q}」不在预置答案范围内。如需更丰富的个性化回答，"
         "请在 `.streamlit/secrets.toml` 中配置 LLM（DeepSeek/通义千问/讯飞星火等均可）。"
     ),
 }
+
+_LOCAL_CHAT_DISCLAIMER = (
+    "\n\n⚠️ 本内容仅供科研教学参考，不构成任何诊疗依据。"
+)
 
 
 def fallback_chat_reply(user_question: str) -> str:
@@ -672,5 +768,5 @@ def fallback_chat_reply(user_question: str) -> str:
         if key == "默认":
             continue
         if key in q:
-            return tmpl.format(q=q[:40])
-    return _FOLLOWUP_TEMPLATES["默认"].format(q=q[:40])
+            return tmpl.format(q=q[:40]) + _LOCAL_CHAT_DISCLAIMER
+    return _FOLLOWUP_TEMPLATES["默认"].format(q=q[:40]) + _LOCAL_CHAT_DISCLAIMER

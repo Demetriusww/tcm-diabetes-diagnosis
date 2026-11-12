@@ -1,6 +1,6 @@
 """
 中医智能辅助辨证系统 — 专业诊断版 V3.0
-功能：6类证型智能辨证 + 针对性药方建议
+功能：6类证型智能辨证 + 经典方剂知识溯源
 设计：现代渐变配色 / 玻璃拟态卡片 / 信息层级清晰
 """
 import streamlit as st
@@ -9,6 +9,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import shap
 import os
+from datetime import datetime
+import streamlit.components.v1 as components
 from model_service import (
     load_model_and_explainer,
     predict_syndrome,
@@ -29,10 +31,28 @@ from config import (
     SYNDROME_INFO,
     FEATURE_GROUPS,
     FEATURE_DESCRIPTIONS,
+    FEATURE_ATTRIBUTES,
     get_syndrome_color,
     get_syndrome_icon,
-    calculate_risk_score
+    create_feature_tooltip,
+    calculate_confidence_level,
 )
+
+# 首次进入页面时所有特征均按“无症状”处理，避免 0.5 全满的假数据观感
+DEFAULT_FEATURE_VALUE = 0.0
+FEATURE_STATE_VERSION = "2026-11-zero-default-v1"
+# 顶部“一键加载预设演示病例”默认使用的病例
+DEMO_CASE = "病例A · 气阴两虚型"
+
+# 左侧模块导航定义：输入区 + 四个结果模块
+MODULE_NAV_ITEMS = [
+    ("input", "00", "🧾", "临床特征采集"),
+    ("conclusion", "01", "📊", "辨证结论"),
+    ("attribution", "02", "🔎", "归因依据"),
+    ("knowledge", "03", "📚", "方剂与调摄"),
+    ("ai", "04", "🧠", "AI 解读与报告"),
+]
+VALID_MODULES = {item[0] for item in MODULE_NAV_ITEMS}
 
 # ============================================================
 # 页面配置 + 主题配置
@@ -41,7 +61,7 @@ st.set_page_config(
     page_title="中医智能辨证系统",
     page_icon="🌿",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 # ============================================================
@@ -63,7 +83,7 @@ st.markdown("""
   --a-400: #ffb74d; --a-500: #ff9800; --a-700: #e65100; --a-900: #bf360c;
   /* ---- 中性色（冷暖交织灰） ---- */
   --n-50:  #f8faf7; --n-100: #eef1ed; --n-200: #dde4df;
-  --n-300: #c6cec9; --n-500: #7a8781; --n-700: #445048; --n-900: #1a231d;
+  --n-300: #c6cec9; --n-500: #566159; --n-700: #39443c; --n-900: #1a231d;
   /* ---- 语义色 ---- */
   --ok-bg: #e8f5e9;    --ok-border: #66bb6a;  --ok-text: #1b5e20;
   --warn-bg: #fbe9e7;  --warn-border: #e57373; --warn-text: #b71c1c;
@@ -86,27 +106,49 @@ st.markdown("""
   text-rendering: optimizeLegibility;
 }
 
-/* ========== 全局背景（冷灰→暖青白 交织径向渐变 + 极淡网格） ========== */
-[data-testid="stAppViewContainer"] > .main {
-    background:
-      radial-gradient(1200px 700px at 10% -10%, rgba(129,199,132,0.18), transparent 60%),
-      radial-gradient(1000px 600px at 110% 10%, rgba(255,183,77,0.10), transparent 60%),
-      radial-gradient(900px 600px at 50% 120%, rgba(102,187,106,0.10), transparent 60%),
-      linear-gradient(180deg, #f6f9f7 0%, #eef3f0 100%);
+/* ========== 全局背景（宣纸暖白 × 淡竹青纹理） ========== */
+html, body, .stApp, [data-testid="stAppViewContainer"] {
+    background-color: #f4f5ef;
+}
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stMain"] {
+    background-color: #f4f5ef !important;
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        rgba(103,82,48,0.018) 0,
+        rgba(103,82,48,0.018) 1px,
+        transparent 1px,
+        transparent 5px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        rgba(46,125,50,0.018) 0,
+        rgba(46,125,50,0.018) 1px,
+        transparent 1px,
+        transparent 72px
+      ),
+      linear-gradient(
+        180deg,
+        rgba(231,242,232,0.74) 0%,
+        rgba(247,247,241,0.76) 36%,
+        rgba(249,245,235,0.86) 100%
+      ) !important;
+    border-left: 1px solid rgba(46,125,50,0.055);
+    box-shadow: inset 18px 0 34px -34px rgba(27,94,32,0.20);
     padding-top: 1.6rem;
     padding-bottom: 4rem;
 }
-[data-testid="stAppViewContainer"] > .main::before {
-    content: ""; position: fixed; inset: 0; pointer-events: none;
-    background-image:
-      linear-gradient(rgba(27,94,32,0.018) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(27,94,32,0.018) 1px, transparent 1px);
-    background-size: 28px 28px;
-    z-index: 0;
+[data-testid="stHeader"] {
+    background: rgba(246,247,240,0.82) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
-[data-testid="stAppViewContainer"] > .main > [data-testid="block-container"] {
+[data-testid="stAppViewContainer"] > .main > [data-testid="block-container"],
+[data-testid="stMain"] [data-testid="block-container"] {
     position: relative; z-index: 1;
     max-width: 1320px;
+    background: transparent !important;
 }
 /* Streamlit 列间距一致化 */
 [data-testid="stHorizontalBlock"] {
@@ -179,6 +221,120 @@ st.markdown("""
       conic-gradient(from 180deg at 50% 50%, var(--p-700), var(--p-500), var(--p-700));
     box-shadow: 0 0 0 3px rgba(102,187,106,0.14);
     flex-shrink: 0;
+}
+
+/* Streamlit 原生边框容器统一为轻量模块面板 */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background: linear-gradient(
+        145deg,
+        rgba(255,255,255,0.92) 0%,
+        rgba(251,250,245,0.84) 100%
+    );
+    border-color: rgba(46,125,50,0.11) !important;
+    border-radius: 12px;
+    box-shadow:
+        0 7px 22px rgba(31,65,38,0.035),
+        inset 0 1px 0 rgba(255,255,255,0.92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+/* ========== 结果摘要条 ========== */
+.result-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(360px, 1fr);
+    gap: 28px;
+    align-items: center;
+    padding: 24px 28px;
+    margin: 4px 0 18px 0;
+    border-radius: 16px;
+    border: 1px solid rgba(27,94,32,0.12);
+    background: linear-gradient(120deg, rgba(255,255,255,0.96), rgba(240,248,242,0.94));
+    box-shadow: var(--sh-1);
+}
+.result-summary-kicker {
+    color: var(--p-700);
+    font-size: 0.78rem;
+    font-weight: 750;
+    letter-spacing: 1.4px;
+    margin-bottom: 6px;
+}
+.result-summary-title {
+    color: var(--p-900);
+    font-size: 1.75rem;
+    font-weight: 800;
+    line-height: 1.35;
+    margin-bottom: 5px;
+}
+.result-summary-desc {
+    color: var(--n-500);
+    font-size: 0.9rem;
+    line-height: 1.75;
+    max-width: 720px;
+}
+.result-summary-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+.result-summary-metric {
+    min-height: 74px;
+    padding: 12px 10px;
+    text-align: center;
+    border-radius: 10px;
+    background: #ffffff;
+    border: 1px solid rgba(27,94,32,0.09);
+}
+.result-summary-metric strong {
+    display: block;
+    color: var(--p-800);
+    font-size: 1.25rem;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+.result-summary-metric span {
+    display: block;
+    margin-top: 4px;
+    color: var(--n-500);
+    font-size: 0.74rem;
+    line-height: 1.35;
+}
+
+/* ========== 结果模块分区标题 ========== */
+.result-module-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 18px;
+    margin: 22px 0 14px 0;
+    border-left: 4px solid var(--p-600);
+    border-radius: 0 12px 12px 0;
+    background: linear-gradient(90deg, rgba(232,245,233,0.92), rgba(255,255,255,0.72));
+}
+.result-module-index {
+    flex: 0 0 42px;
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: var(--p-700);
+    color: #ffffff;
+    font-size: 0.88rem;
+    font-weight: 800;
+}
+.result-module-title {
+    color: var(--p-900);
+    font-size: 1.12rem;
+    font-weight: 800;
+    line-height: 1.4;
+}
+.result-module-subtitle {
+    margin-top: 3px;
+    color: var(--n-700);
+    font-size: 0.82rem;
+    line-height: 1.55;
 }
 
 /* ========== Hero 诊断大卡 ========== */
@@ -281,7 +437,7 @@ st.markdown("""
 }
 .kpi-label {
     font-size: 0.82rem;
-    color: var(--n-500);
+    color: var(--n-700);
     font-weight: 500;
     letter-spacing: 0.3px;
 }
@@ -438,17 +594,6 @@ st.markdown("""
     flex-shrink: 0;
     box-shadow: 0 0 0 3px rgba(255,183,77,0.18);
 }
-.herb-dose {
-    font-size: 0.76rem;
-    color: #8d6e63;
-    font-weight: 500;
-    background: rgba(255,183,77,0.18);
-    padding: 2px 8px;
-    border-radius: 999px;
-    white-space: nowrap;
-    margin-left: 6px;
-    flex-shrink: 0;
-}
 /* 君臣佐使 视觉分组线（不显示文字，仅做横向分隔） */
 .herb-group-divider {
     grid-column: 1 / -1;
@@ -527,6 +672,26 @@ st.markdown("""
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 12px;
 }
+.sidebar-nav-heading {
+    margin: 0 0 4px 0;
+    color: #ffffff;
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+.sidebar-nav-caption {
+    margin: 0 0 10px 0;
+    color: rgba(255,255,255,0.68) !important;
+    font-size: 0.74rem;
+    line-height: 1.55;
+}
+.sidebar-section-label {
+    margin: 6px 0 2px 0;
+    color: rgba(255,255,255,0.82) !important;
+    font-size: 0.78rem;
+    font-weight: 750;
+    letter-spacing: 0.8px;
+}
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] span,
@@ -549,6 +714,45 @@ st.markdown("""
     background: rgba(255,255,255,0.08) !important;
     border-color: rgba(102,187,106,0.35) !important;
     color: rgba(255,255,255,0.92) !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    min-height: 42px;
+    padding: 10px 13px;
+    justify-content: flex-start;
+    text-align: left;
+    border-radius: 9px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.055);
+    box-shadow: none;
+    font-size: 0.86rem;
+    font-weight: 650;
+    letter-spacing: 0;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    border-color: rgba(255,255,255,0.24);
+    background: rgba(255,255,255,0.10);
+    transform: none;
+    box-shadow: none;
+}
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
+    color: #123816 !important;
+    background: linear-gradient(135deg, #f1fbf2 0%, #ccebd0 100%) !important;
+    border-color: rgba(255,255,255,0.72) !important;
+    box-shadow: 0 5px 16px rgba(0,0,0,0.14) !important;
+}
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] *,
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] p,
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] span {
+    color: #123816 !important;
+}
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:hover {
+    background: linear-gradient(135deg, #ffffff 0%, #d9f2dc 100%) !important;
+}
+[data-testid="stSidebar"] .stButton > button:disabled {
+    color: rgba(255,255,255,0.42) !important;
+    border-color: rgba(255,255,255,0.07);
+    background: rgba(255,255,255,0.025);
+    opacity: 1;
 }
 
 /* ========== 主按钮（胶囊 + 微互动 + 脉冲光环） ========== */
@@ -627,13 +831,32 @@ div[data-testid="stSlider"] > div:nth-child(2) > div:nth-child(3) {
     top: -6px !important;
 }
 
-/* ========== 原生 Caption / 辅助文字 ========== */
+/* ========== 原生 Caption / 辅助文字（提高白底对比度） ========== */
 [data-testid="stCaptionContainer"] {
     font-size: 0.86rem !important;
-    color: var(--n-500) !important;
+    color: var(--n-700) !important;
     line-height: 1.8 !important;
 }
-small, .stMarkdown small { color: var(--n-500) !important; }
+[data-testid="stCaptionContainer"] p,
+[data-testid="stCaptionContainer"] span {
+    color: var(--n-700) !important;
+}
+small, .stMarkdown small { color: var(--n-700) !important; }
+/* 说明性正文 → 统一加深，避免浅灰/浅绿在白底上看不清 */
+.stMarkdown p, .stMarkdown li, .stMarkdown span {
+    color: var(--n-900);
+}
+[data-testid="stWidgetLabel"] p {
+    color: var(--n-900) !important;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p {
+    color: var(--n-900) !important;
+    font-weight: 650;
+}
+.stAlert p, .stAlert span, .stAlert div {
+    color: #1f2a23 !important;
+}
 
 /* ========== 分隔线 ========== */
 .divider {
@@ -676,6 +899,39 @@ div[data-testid="column"] {
     .glass-card   { padding: 18px 16px; border-radius: var(--r-md); }
     .prob-bar-name { min-width: 76px; }
     .kpi-value { font-size: 1.4rem; }
+    .result-summary {
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 20px 18px;
+    }
+    .result-summary-title { font-size: 1.45rem; }
+    .result-summary-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .result-module-header {
+        align-items: flex-start;
+        padding: 14px;
+        gap: 11px;
+    }
+    .result-module-index {
+        flex-basis: 36px;
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+    }
+    .result-module-title { font-size: 1rem; }
+    .stTabs [data-baseweb="tab-list"] {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px;
+        padding: 4px;
+        overflow-x: visible;
+    }
+    .stTabs [data-baseweb="tab"] {
+        width: 100%;
+        min-height: 42px;
+        padding: 8px 12px;
+        font-size: 0.82rem;
+        justify-content: center;
+    }
 }
 @media (max-width: 480px) {
     [data-testid="stAppViewContainer"] > .main { padding-top: 0.8rem; }
@@ -685,6 +941,11 @@ div[data-testid="column"] {
     .kpi-icon { width: 38px; height: 38px; font-size: 1.35rem; }
     .formula-card { padding: 18px 16px; }
     .diagnosis-hero { padding: 20px 16px; }
+    .result-summary { padding: 18px 14px; }
+    .result-summary-metrics { gap: 6px; }
+    .result-summary-metric { min-height: 68px; padding: 10px 6px; }
+    .result-summary-metric strong { font-size: 1.05rem; }
+    .result-summary-metric span { font-size: 0.68rem; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -748,7 +1009,7 @@ SYNDROME_FEATURE_EVIDENCE = {
 
 
 # ============================================================
-# 6证型 完整 诊断与药方（对症下药，每证不同）
+# 6证型 经典方剂知识（仅展示方名、出处与药材名录，不含剂量）
 # ============================================================
 SYNDROME_TREATMENT = {
     "气阴两虚": {
@@ -758,26 +1019,17 @@ SYNDROME_TREATMENT = {
             "name": "生脉散合六味地黄丸加减",
             "source": "《医学启源》生脉散 + 《小儿药证直诀》六味地黄丸化裁",
             "herbs": [
-                ("黄芪", "20-30g"),
-                ("太子参", "15-20g"),
-                ("麦冬", "12-15g"),
-                ("五味子", "6-9g"),
-                ("生地黄", "15-20g"),
-                ("山萸肉", "10-12g"),
-                ("怀山药", "20-30g"),
-                ("茯苓", "12-15g"),
-                ("牡丹皮", "9-12g"),
-                ("泽泻", "9-12g"),
-                ("白术", "12-15g"),
-                ("甘草", "6g"),
+                "黄芪", "太子参", "麦冬", "五味子",
+                "生地黄", "山萸肉", "怀山药", "茯苓",
+                "牡丹皮", "泽泻", "白术", "甘草",
             ]
         },
         "addition_subtraction": [
-            "口渴甚者：加 天花粉 15-20g、知母 9-12g 清热生津",
-            "自汗明显者：加 浮小麦 30g、煅牡蛎 24g 固表敛汗",
-            "便溏者：减生地黄，加 炒扁豆 15g、薏苡仁 20g 健脾止泻",
-            "失眠心悸者：加 酸枣仁 15g、远志 9g 养心安神",
-            "腰膝酸软甚者：加 桑寄生 15g、川牛膝 12g 补肝肾强筋骨",
+            "口渴甚者：加 天花粉、知母 清热生津",
+            "自汗明显者：加 浮小麦、煅牡蛎 固表敛汗",
+            "便溏者：减生地黄，加 炒扁豆、薏苡仁 健脾止泻",
+            "失眠心悸者：加 酸枣仁、远志 养心安神",
+            "腰膝酸软甚者：加 桑寄生、川牛膝 补肝肾强筋骨",
         ],
         "lifestyle": [
             "劳逸结合：避免长时间伏案劳作及剧烈运动，宜太极拳、八段锦等柔和锻炼",
@@ -794,26 +1046,17 @@ SYNDROME_TREATMENT = {
             "name": "黄连温胆汤合小陷胸汤加减",
             "source": "《六因条辨》黄连温胆汤 + 《伤寒论》小陷胸汤化裁",
             "herbs": [
-                ("黄连", "6-9g"),
-                ("黄芩", "9-12g"),
-                ("法半夏", "9-12g"),
-                ("竹茹", "10-12g"),
-                ("枳实", "9-12g"),
-                ("全瓜蒌", "20-30g"),
-                ("陈皮", "9-12g"),
-                ("茯苓", "15-20g"),
-                ("浙贝母", "9-12g"),
-                ("胆南星", "6-9g"),
-                ("柴胡", "9-12g"),
-                ("甘草", "6g"),
+                "黄连", "黄芩", "法半夏", "竹茹",
+                "枳实", "全瓜蒌", "陈皮", "茯苓",
+                "浙贝母", "胆南星", "柴胡", "甘草",
             ]
         },
         "addition_subtraction": [
-            "脘腹胀甚者：加 厚朴 9g、大腹皮 12g 理气消胀",
-            "大便黏滞不爽者：加 木香 6g、槟榔 9g 导滞通腑",
-            "口苦胁痛者：加 龙胆草 6g、郁金 12g 清胆疏肝",
-            "纳呆食少者：加 神曲 12g、炒谷麦芽各 15g 健胃消食",
-            "痰浊壅盛、胸闷咯痰者：加 薤白 9g、桔梗 9g 开胸化痰",
+            "脘腹胀甚者：加 厚朴、大腹皮 理气消胀",
+            "大便黏滞不爽者：加 木香、槟榔 导滞通腑",
+            "口苦胁痛者：加 龙胆草、郁金 清胆疏肝",
+            "纳呆食少者：加 神曲、炒谷麦芽 健胃消食",
+            "痰浊壅盛、胸闷咯痰者：加 薤白、桔梗 开胸化痰",
         ],
         "lifestyle": [
             "饮食控制：严格限制肥甘厚味、甜腻糕点及烈性酒；主食粗细搭配，多食芹菜、冬瓜、海带等化痰利湿之品",
@@ -830,26 +1073,17 @@ SYNDROME_TREATMENT = {
             "name": "杞菊地黄丸合一贯煎化裁",
             "source": "《麻疹全书》杞菊地黄丸 + 《续名医类案》一贯煎加减",
             "herbs": [
-                ("枸杞子", "12-15g"),
-                ("杭菊花", "9-12g"),
-                ("熟地黄", "18-24g"),
-                ("山萸肉", "10-12g"),
-                ("怀山药", "15-20g"),
-                ("茯苓", "12-15g"),
-                ("牡丹皮", "9-12g"),
-                ("泽泻", "9-12g"),
-                ("北沙参", "12-15g"),
-                ("麦冬", "12g"),
-                ("当归身", "9-12g"),
-                ("川楝子", "6g"),
+                "枸杞子", "杭菊花", "熟地黄", "山萸肉",
+                "怀山药", "茯苓", "牡丹皮", "泽泻",
+                "北沙参", "麦冬", "当归身", "川楝子",
             ]
         },
         "addition_subtraction": [
-            "视物昏花甚者：加 女贞子 12g、旱莲草 12g、决明子 12g 益肝明目",
-            "潮热盗汗者：加 地骨皮 12g、银柴胡 9g、浮小麦 24g 清虚热敛汗",
-            "头晕耳鸣者：加 天麻 9g、钩藤 15g（后下）、磁石 30g（先煎）平肝潜阳",
-            "遗精滑泄者：加 金樱子 12g、芡实 15g、莲须 9g 固肾涩精",
-            "失眠多梦：加 酸枣仁 15g、夜交藤 24g 养血安神",
+            "视物昏花甚者：加 女贞子、旱莲草、决明子 益肝明目",
+            "潮热盗汗者：加 地骨皮、银柴胡、浮小麦 清虚热敛汗",
+            "头晕耳鸣者：加 天麻、钩藤（后下）、磁石（先煎）平肝潜阳",
+            "遗精滑泄者：加 金樱子、芡实、莲须 固肾涩精",
+            "失眠多梦：加 酸枣仁、夜交藤 养血安神",
         ],
         "lifestyle": [
             "护养肾精：节制房事，避免过度操劳耗损肾精",
@@ -866,26 +1100,17 @@ SYNDROME_TREATMENT = {
             "name": "消渴方合白虎加人参汤加减",
             "source": "《丹溪心法》消渴方 + 《伤寒论》白虎加人参汤化裁",
             "herbs": [
-                ("生石膏", "30-45g（先煎）"),
-                ("知母", "12-15g"),
-                ("西洋参", "6-9g（另炖兑服）"),
-                ("天花粉", "20-30g"),
-                ("生地黄", "20-30g"),
-                ("黄连", "6-9g"),
-                ("麦冬", "15-18g"),
-                ("葛根", "15-20g"),
-                ("黄芩", "9-12g"),
-                ("栀子", "9g"),
-                ("粳米", "15g"),
-                ("炙甘草", "6g"),
+                "生石膏（先煎）", "知母", "西洋参（另炖兑服）", "天花粉",
+                "生地黄", "黄连", "麦冬", "葛根",
+                "黄芩", "栀子", "粳米", "炙甘草",
             ]
         },
         "addition_subtraction": [
-            "口渴甚者：加 鲜芦根 30g、乌梅 9g 生津止渴",
-            "多食易饥甚者：加 黄连量至 9-12g，配 升麻 6g 清胃泻火",
-            "大便秘结、舌苔黄燥者：加 生大黄 6-9g（后下）、玄明粉 6g（冲） 急下存阴",
-            "心烦失眠、口舌生疮：加 竹叶心 6g、莲子心 3g、连翘心 6g 清泻心火",
-            "牙龈肿痛、口臭：加 升麻 6g、牡丹皮 12g 清泻胃火凉血",
+            "口渴甚者：加 鲜芦根、乌梅 生津止渴",
+            "多食易饥甚者：加 黄连，配 升麻 清胃泻火",
+            "大便秘结、舌苔黄燥者：加 生大黄（后下）、玄明粉（冲） 急下存阴",
+            "心烦失眠、口舌生疮：加 竹叶心、莲子心、连翘心 清泻心火",
+            "牙龈肿痛、口臭：加 升麻、牡丹皮 清泻胃火凉血",
         ],
         "lifestyle": [
             "饮食宜忌：严格忌食辛辣、烧烤、煎炸及温燥补品；宜多饮温水、淡茶水，多食苦瓜、黄瓜、梨、藕、绿豆等清热生津之品",
@@ -902,26 +1127,17 @@ SYNDROME_TREATMENT = {
             "name": "大柴胡汤合左金丸化裁",
             "source": "《金匮要略》大柴胡汤 + 《丹溪心法》左金丸加减",
             "herbs": [
-                ("柴胡", "12-15g"),
-                ("黄芩", "12-15g"),
-                ("黄连", "6-9g"),
-                ("吴茱萸", "1.5-3g"),
-                ("生大黄", "6-9g（后下）"),
-                ("枳实", "9-12g"),
-                ("白芍", "15-20g"),
-                ("法半夏", "9-12g"),
-                ("生姜", "6g"),
-                ("大枣", "5枚"),
-                ("郁金", "12g"),
-                ("川楝子", "9g"),
+                "柴胡", "黄芩", "黄连", "吴茱萸",
+                "生大黄（后下）", "枳实", "白芍", "法半夏",
+                "生姜", "大枣", "郁金", "川楝子",
             ]
         },
         "addition_subtraction": [
-            "烦躁易怒、胁痛甚者：加 龙胆草 6g、醋香附 12g、青皮 9g 疏肝理气止痛",
-            "嗳气泛酸：加 乌贼骨 24g（先煎）、浙贝母 9g、煅瓦楞子 24g（先煎） 抑酸和胃",
-            "大便干结甚者：加 玄明粉 6g（冲）、厚朴 12g 通腑泻下",
-            "胸胁胀痛、善太息：加 佛手 9g、绿萼梅 6g、玫瑰花 6g 疏肝理气解郁",
-            "头痛目赤、血压偏高：加 天麻 9g、钩藤 15g（后下）、夏枯草 15g 平肝潜阳",
+            "烦躁易怒、胁痛甚者：加 龙胆草、醋香附、青皮 疏肝理气止痛",
+            "嗳气泛酸：加 乌贼骨（先煎）、浙贝母、煅瓦楞子（先煎） 抑酸和胃",
+            "大便干结甚者：加 玄明粉（冲）、厚朴 通腑泻下",
+            "胸胁胀痛、善太息：加 佛手、绿萼梅、玫瑰花 疏肝理气解郁",
+            "头痛目赤、血压偏高：加 天麻、钩藤（后下）、夏枯草 平肝潜阳",
         ],
         "lifestyle": [
             "情志调理：首重调畅情志，保持心态平和；可练习正念、深呼吸、听舒缓音乐；遇事戒怒",
@@ -935,31 +1151,21 @@ SYNDROME_TREATMENT = {
         "diagnosis_summary": "阴损及阳，阴阳俱虚。多为病程迁延日久，由阴虚发展而来。阴虚本在，又见畏寒肢冷、面浮肢肿等阳虚失温之象。病位深及下焦肾元，为病之后期阶段。",
         "treatment_principle": "温阳滋阴，补肾固摄，兼补脾益气",
         "formula": {
-            "name": "金匮肾气丸合金匮肾气丸/水陆二仙丹化裁",
+            "name": "金匮肾气丸合水陆二仙丹化裁",
             "source": "《金匮要略》肾气丸 + 《洪氏集验方》水陆二仙丹化裁",
             "herbs": [
-                ("熟附子", "6-9g（先煎）"),
-                ("桂枝", "6-9g"),
-                ("熟地黄", "18-24g"),
-                ("山萸肉", "12g"),
-                ("怀山药", "20-30g"),
-                ("茯苓", "15g"),
-                ("牡丹皮", "9g"),
-                ("泽泻", "12g"),
-                ("金樱子", "15g"),
-                ("芡实", "15g"),
-                ("补骨脂", "12g"),
-                ("淫羊藿", "12g"),
-                ("黄芪", "20-30g"),
-                ("白术", "12-15g"),
+                "熟附子（先煎）", "桂枝", "熟地黄", "山萸肉",
+                "怀山药", "茯苓", "牡丹皮", "泽泻",
+                "金樱子", "芡实", "补骨脂", "淫羊藿",
+                "黄芪", "白术",
             ]
         },
         "addition_subtraction": [
-            "畏寒肢冷甚者：加 肉桂粉 2g（冲）、干姜 6g 增温阳之力",
-            "下肢浮肿明显：加 车前子 15g（包）、冬瓜皮 30g、川牛膝 12g 利水消肿",
-            "夜尿频多：加 桑螵蛸 12g、益智仁 12g、乌药 9g 温肾缩尿",
-            "五更泄、便溏：加 肉豆蔻 9g、吴茱萸 3g、五味子 6g 温脾暖肾涩肠",
-            "胸闷心悸、唇舌紫暗：加 丹参 15g、桃仁 9g、红花 6g 活血化瘀通络",
+            "畏寒肢冷甚者：加 肉桂粉（冲）、干姜 增温阳之力",
+            "下肢浮肿明显：加 车前子（包）、冬瓜皮、川牛膝 利水消肿",
+            "夜尿频多：加 桑螵蛸、益智仁、乌药 温肾缩尿",
+            "五更泄、便溏：加 肉豆蔻、吴茱萸、五味子 温脾暖肾涩肠",
+            "胸闷心悸、唇舌紫暗：加 丹参、桃仁、红花 活血化瘀通络",
         ],
         "lifestyle": [
             "防寒保暖：特别注意腰腹、下肢及足部保暖；睡前温水泡脚 15-20 分钟",
@@ -1001,6 +1207,174 @@ CASE_STUDIES = {
         'features': [0.48, 0.22, 0.86, 0.28, 0.18, 0.48, 0.46, 0.58, 0.92, 0.90, 0.96, 0.90, 0.26, 0.38, 0.86],
     },
 }
+
+
+# ============================================================
+# 会话状态：保证侧栏病例、顶部预设按钮与滑块始终同步
+# ============================================================
+def _set_feature_values(values):
+    """同时更新业务状态和滑块控件状态，避免 Streamlit 旧 widget state 覆盖新值。"""
+    normalized = {
+        fn: float(values.get(fn, DEFAULT_FEATURE_VALUE))
+        for fn in FEATURE_NAMES
+    }
+    st.session_state.feature_values = normalized
+    for fn, value in normalized.items():
+        st.session_state[f"sld_{fn}"] = value
+    return normalized
+
+
+def _initialize_feature_state():
+    """首次进入或版本升级时将 15 项特征统一初始化为“无症状”。"""
+    if st.session_state.get("_feature_state_version") != FEATURE_STATE_VERSION:
+        _set_feature_values({fn: DEFAULT_FEATURE_VALUE for fn in FEATURE_NAMES})
+        st.session_state.selected_case = "手动输入特征"
+        st.session_state.case_selectbox = "手动输入特征"
+        st.session_state["diagnosis_done"] = False
+        st.session_state["current_module"] = "input"
+        st.session_state["_feature_state_version"] = FEATURE_STATE_VERSION
+        return
+
+    values = st.session_state.get("feature_values")
+    if not isinstance(values, dict):
+        st.session_state.feature_values = {
+            fn: DEFAULT_FEATURE_VALUE for fn in FEATURE_NAMES
+        }
+    else:
+        for fn in FEATURE_NAMES:
+            st.session_state.feature_values.setdefault(fn, DEFAULT_FEATURE_VALUE)
+
+    if "selected_case" not in st.session_state:
+        st.session_state.selected_case = "手动输入特征"
+    if "case_selectbox" not in st.session_state:
+        st.session_state.case_selectbox = st.session_state.selected_case
+    if st.session_state.get("current_module") not in VALID_MODULES:
+        st.session_state.current_module = "input"
+
+
+def _apply_case_to_session(case_name):
+    """病例加载回调：在控件重绘前强制刷新业务值与全部滑块值。"""
+    case = CASE_STUDIES.get(case_name)
+    if not case:
+        return
+
+    values = {
+        fn: float(case["features"][idx])
+        for idx, fn in enumerate(FEATURE_NAMES)
+    }
+    _set_feature_values(values)
+    st.session_state.selected_case = case_name
+    if "case_selectbox" in st.session_state:
+        st.session_state.case_selectbox = case_name
+    st.session_state["_loaded_case_notice"] = (
+        case_name,
+        case.get("description", ""),
+    )
+    st.session_state["diagnosis_done"] = False
+    st.session_state["current_module"] = "input"
+    st.session_state["scroll_to_module_top"] = True
+
+
+def _on_case_change():
+    case_name = st.session_state.get("case_selectbox", "手动输入特征")
+    if case_name != "手动输入特征":
+        _apply_case_to_session(case_name)
+
+
+def _navigate_to_module(module_id):
+    """侧边栏导航回调：切换模块并在重绘后回到当前模块顶部。"""
+    if module_id not in VALID_MODULES:
+        return
+    if module_id != "input" and not st.session_state.get("diagnosis_done", False):
+        return
+    st.session_state.current_module = module_id
+    st.session_state["scroll_to_module_top"] = True
+
+
+def _current_feature_inputs():
+    """从会话状态读取当前 15 项特征，供切回结果模块时继续使用。"""
+    stored = st.session_state.get("feature_values", {})
+    return {
+        fn: float(stored.get(fn, DEFAULT_FEATURE_VALUE))
+        for fn in FEATURE_NAMES
+    }
+
+
+def _restore_slider_widget_state(feature_inputs):
+    """恢复被 Streamlit 清理的隐藏滑块控件状态。"""
+    for fn in FEATURE_NAMES:
+        widget_key = f"sld_{fn}"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = feature_inputs[fn]
+
+
+def _schedule_scroll_to_top():
+    """在模块内容渲染完成后执行一次短时、可中断的滚动复位。"""
+    # Streamlit 会复用内容完全相同的组件 iframe。加入唯一标记后，
+    # 每次导航都会重新加载脚本，确保复位逻辑真正执行。
+    reset_token = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    components.html(
+        f"""
+        <div id="module-scroll-reset-{reset_token}" aria-hidden="true"></div>
+        <script>
+        (() => {{
+          const parentWindow = window.parent;
+          const parentDocument = parentWindow.document;
+          const main = parentDocument.querySelector('[data-testid="stMain"]');
+          if (!main) return;
+
+          let userInterrupted = false;
+
+          const scrollToTop = () => {{
+            if (userInterrupted) return;
+            main.scrollTop = 0;
+            main.scrollTo({{top: 0, left: 0, behavior: "auto"}});
+            parentWindow.scrollTo({{top: 0, left: 0, behavior: "auto"}});
+          }};
+
+          // 用户一旦开始正常翻页，立即终止尚未执行的复位，避免“向上跳”。
+          const cancelReset = () => {{
+            userInterrupted = true;
+          }};
+          parentWindow.addEventListener("wheel", cancelReset, {{once: true, passive: true}});
+          parentWindow.addEventListener("touchstart", cancelReset, {{once: true, passive: true}});
+          parentWindow.addEventListener("keydown", cancelReset, {{once: true}});
+
+          scrollToTop();
+          parentWindow.requestAnimationFrame(() => {{
+            scrollToTop();
+            parentWindow.requestAnimationFrame(scrollToTop);
+          }});
+          parentWindow.setTimeout(scrollToTop, 80);
+          parentWindow.setTimeout(scrollToTop, 180);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _render_sidebar_navigation(diagnosis_done, current_module):
+    st.sidebar.markdown(
+        '<div class="sidebar-nav-heading">🧭 功能导航</div>'
+        '<div class="sidebar-nav-caption">选择模块后，右侧仅显示当前内容</div>',
+        unsafe_allow_html=True,
+    )
+    for module_id, number, icon, title in MODULE_NAV_ITEMS:
+        is_result_module = module_id != "input"
+        st.sidebar.button(
+            f"{number} · {icon} {title}",
+            key=f"nav_module_{module_id}",
+            type="primary" if current_module == module_id else "secondary",
+            disabled=is_result_module and not diagnosis_done,
+            help=(
+                "完成辨证分析后可查看"
+                if is_result_module and not diagnosis_done
+                else None
+            ),
+            on_click=_navigate_to_module,
+            args=(module_id,),
+        )
 
 
 # ============================================================
@@ -1249,7 +1623,226 @@ def render_header():
     c1, c2, c3 = st.columns([1, 5, 1])
     with c2:
         st.markdown('<h1 class="brand-title">症智明辨</h1>', unsafe_allow_html=True)
-        st.markdown('<p class="brand-subtitle">🌿 中医智能辅助辨证系统 · 基于 15 项临床特征 · 六类中医证型 · 可解释性决策引擎 · 个性化方药建议</p>', unsafe_allow_html=True)
+        st.markdown('<p class="brand-subtitle">🌿 中医智能辅助辨证系统 · 基于 15 项临床特征 · 六类中医证型 · 可解释性决策引擎 · 经典方剂知识溯源</p>', unsafe_allow_html=True)
+
+
+def render_result_module_header(anchor, number, icon, title, subtitle):
+    """渲染顺序展示的结果模块标题，避免标签页隐藏原有功能。"""
+    st.markdown(
+        f"""
+        <div id="{anchor}" class="result-module-header">
+            <div class="result-module-index">{number}</div>
+            <div>
+                <div class="result-module-title">{icon} {title}</div>
+                <div class="result-module-subtitle">{subtitle}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# 渲染：AI 解读与多轮追问（固定放在结果页最后）
+# ============================================================
+def render_ai_interpretation(feature_inputs, probs, shap_dict, pred_s):
+    st.markdown(
+        '<div class="section-title" style="font-size:1.3rem;">🧠 AI 教研解读与追问</div>',
+        unsafe_allow_html=True,
+    )
+
+    llm_cfg = get_llm_config()
+    if llm_cfg.get("configured"):
+        st.caption(
+            "本模块仅解读 ML 模型已输出的证型、概率与 SHAP 线索，不会独立重新诊断。"
+            f"当前配置：{llm_cfg.get('provider', '?')} / {llm_cfg.get('model', '?')}；"
+            "网络或 API 异常时自动切换到本地标准解读。"
+        )
+    else:
+        st.caption(
+            "本模块仅解读 ML 模型已输出的证型、概率与 SHAP 线索，不会独立重新诊断。"
+            "当前使用本地标准解读，断网也能即时输出完整四段式教学内容。"
+        )
+
+    _session_key = (
+        f"chat_session__{pred_s}__"
+        f"{hash(tuple(sorted((probs or {}).items())))}"
+    )
+    if st.session_state.get("_last_diag_key") != _session_key:
+        st.session_state["chat_messages"] = []
+        st.session_state["chat_system_prompt"] = None
+        st.session_state["_first_interp_meta"] = None
+        st.session_state["_first_interp_text"] = None
+        st.session_state["_last_diag_key"] = _session_key
+
+    c1, c2, c3 = st.columns([3, 1, 1])
+    with c1:
+        if st.button(
+            "🔍 大模型智能解读本次辨证结果",
+            disabled=(probs is None or shap_dict is None),
+            width="stretch",
+            key="btn_first_interp",
+        ):
+            try:
+                with st.spinner("正在检索中医理论并生成四段式辨证解读…"):
+                    symptoms = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[:12]}
+                    tongue = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[12:]}
+
+                    st.session_state["chat_system_prompt"] = build_chat_system_prompt(
+                        symptoms=symptoms,
+                        tongue_pulse=tongue,
+                        probabilities=probs,
+                        shap_dict=shap_dict,
+                        feature_names=FEATURE_NAMES,
+                        syndrome_labels=SYNDROME_LABELS,
+                    )
+                    st.session_state["chat_messages"] = []
+
+                    ai_result = generate_llm_interpretation(
+                        symptoms=symptoms,
+                        tongue_pulse=tongue,
+                        probabilities=probs,
+                        shap_dict=shap_dict,
+                        feature_names=FEATURE_NAMES,
+                        syndrome_labels=SYNDROME_LABELS,
+                        use_llm=True,
+                    )
+                    st.session_state["chat_messages"].append({
+                        "role": "assistant",
+                        "content": ai_result["text"],
+                    })
+                    st.session_state["_first_interp_text"] = ai_result["text"]
+                    st.session_state["_first_interp_meta"] = {
+                        "source": ai_result["source"],
+                        "error": ai_result.get("error"),
+                    }
+            except Exception as e:
+                st.error(f"AI 解读失败：{e}")
+    with c2:
+        if st.button("🗑 清空当前会话", width="stretch", key="btn_clear_chat"):
+            st.session_state["chat_messages"] = []
+            st.session_state["_first_interp_meta"] = None
+            st.session_state["_first_interp_text"] = None
+            st.rerun()
+    with c3:
+        meta = st.session_state.get("_first_interp_meta") or {}
+        if meta.get("source") == "mock":
+            badge_text = "📝 本地标准解读"
+            badge_color = "#8d6e63"
+        elif llm_cfg.get("configured"):
+            badge_text = "🛰 已接入大模型"
+            badge_color = "#1b5e20"
+        else:
+            badge_text = "📝 本地标准解读"
+            badge_color = "#8d6e63"
+        st.markdown(
+            f'<span style="display:inline-block;background:{badge_color}1a;'
+            f'color:{badge_color};border:1px solid {badge_color}40;'
+            f'padding:6px 12px;border-radius:999px;font-size:0.82rem;'
+            f'font-weight:650;width:100%;text-align:center;margin-top:2px;">{badge_text}</span>',
+            unsafe_allow_html=True,
+        )
+
+    history = st.session_state.get("chat_messages", [])
+    if not history:
+        st.info("点击上方按钮可生成首轮解读；网络不可用时，系统会即时使用本地标准答案。")
+    else:
+        for msg in history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+        meta = st.session_state.get("_first_interp_meta")
+        if meta and meta.get("error"):
+            st.warning(f"大模型调用已降级：{meta['error'][:120]}")
+
+    prompt = st.chat_input(
+        "💬 继续追问：例如「气阴两虚和阴虚热盛怎么鉴别？」「饮食还有哪些禁忌？」",
+        key="chat_input",
+    )
+    if prompt:
+        st.session_state["chat_messages"].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        if st.session_state.get("chat_system_prompt") is None:
+            symptoms = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[:12]}
+            tongue = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[12:]}
+            st.session_state["chat_system_prompt"] = build_chat_system_prompt(
+                symptoms=symptoms,
+                tongue_pulse=tongue,
+                probabilities=probs,
+                shap_dict=shap_dict,
+                feature_names=FEATURE_NAMES,
+                syndrome_labels=SYNDROME_LABELS,
+            )
+
+        with st.chat_message("assistant"):
+            with st.spinner("正在结合四诊信息思考…"):
+                try:
+                    if llm_cfg.get("configured"):
+                        reply = chat_with_patient_data(
+                            user_question=prompt,
+                            history=st.session_state["chat_messages"][:-1],
+                            system_prompt=st.session_state["chat_system_prompt"],
+                        )
+                    else:
+                        reply = fallback_chat_reply(prompt)
+                except Exception as e:
+                    reply = f"⚠️ {str(e)}\n\n" + fallback_chat_reply(prompt)
+
+            st.markdown(reply)
+            st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+
+
+def build_teaching_report(pred_s, probabilities, feature_values, shap_dict, ai_text):
+    """生成可下载的纯文本教研报告，内容不包含任何处方或剂量。"""
+    ordered_probs = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
+    shap_arr = np.asarray(
+        shap_dict.get(pred_s, np.zeros(len(FEATURE_NAMES))), dtype=float
+    ).flatten()
+    if len(shap_arr) < len(FEATURE_NAMES):
+        shap_arr = np.pad(shap_arr, (0, len(FEATURE_NAMES) - len(shap_arr)))
+    top_idx = np.argsort(-np.abs(shap_arr))[:5]
+
+    feature_lines = [
+        f"- {name}：{float(feature_values.get(name, 0.0)):.2f}"
+        for name in FEATURE_NAMES
+    ]
+    probability_lines = [
+        f"- {name}：{float(probability):.1%}"
+        for name, probability in ordered_probs
+    ]
+    shap_lines = [
+        f"- {FEATURE_NAMES[int(idx)]}：{shap_arr[int(idx)]:+.4f}"
+        for idx in top_idx
+    ]
+    clean_ai_text = ai_text.replace("###", "").replace("**", "").strip()
+
+    return "\n".join([
+        "症智明辨·中医辨证教学分析报告",
+        "=" * 42,
+        f"生成时间：{datetime.now():%Y-%m-%d %H:%M:%S}",
+        "",
+        "一、主证结论",
+        f"- 主证：{pred_s}证",
+        f"- 主证匹配度：{float(probabilities[pred_s]):.1%}",
+        "",
+        "二、六类证型概率分布",
+        *probability_lines,
+        "",
+        "三、临床四诊特征采集（15 项）",
+        *feature_lines,
+        "",
+        "四、主证 SHAP Top 5",
+        *shap_lines,
+        "",
+        "五、AI / 本地标准教研解读",
+        clean_ai_text,
+        "",
+        "六、免责声明",
+        "本报告为中医辅助辨证科研教学工具输出，仅供院校师生教研参考，"
+        "不构成任何医疗处方、诊断意见或治疗方案。具体诊断与治疗须由执业中医师"
+        "四诊合参后确定，严禁照方抓药或自行用药。",
+    ])
 
 
 # ============================================================
@@ -1260,474 +1853,459 @@ def render_diagnosis():
     with st.spinner('正在初始化诊断引擎...'):
         model, explainer = get_model()
 
+    _initialize_feature_state()
+
+    diagnosis_done = st.session_state.get("diagnosis_done", False)
+    if not diagnosis_done and st.session_state.get("current_module") != "input":
+        st.session_state.current_module = "input"
+    if st.session_state.get("current_module") not in VALID_MODULES:
+        st.session_state.current_module = "input"
+    current_module = st.session_state.current_module
+
+    # 侧边栏：模块导航
+    _render_sidebar_navigation(diagnosis_done, current_module)
+    st.sidebar.markdown(
+        '<div style="height:1px;background:rgba(255,255,255,0.2);margin:1rem 0 0.8rem 0;"></div>',
+        unsafe_allow_html=True,
+    )
+
     # 侧边栏：典型病例
     st.sidebar.markdown('<div class="sidebar-brand">📚 典型病例库</div>', unsafe_allow_html=True)
     st.sidebar.markdown('<div class="sidebar-brand-sub">精选 6 类证型典型病例<br>一键加载完整特征</div>', unsafe_allow_html=True)
     st.sidebar.markdown('<div style="height:1px;background:rgba(255,255,255,0.2);margin:0.6rem 0;"></div>', unsafe_allow_html=True)
 
-    if 'feature_values' not in st.session_state:
-        st.session_state.feature_values = {f: 0.5 for f in FEATURE_NAMES}
-    if 'selected_case' not in st.session_state:
-        st.session_state.selected_case = "手动输入特征"
-
     case_opt = st.sidebar.selectbox(
         "加载典型病例：",
         ["手动输入特征"] + list(CASE_STUDIES.keys()),
         help="选择后将自动填充对应证型的特征值",
+        key="case_selectbox",
+        on_change=_on_case_change,
     )
-    if case_opt != "手动输入特征" and case_opt != st.session_state.selected_case:
-        st.session_state.selected_case = case_opt
-        case = CASE_STUDIES[case_opt]
-        for i, fn in enumerate(FEATURE_NAMES):
-            st.session_state.feature_values[fn] = case['features'][i]
-        st.sidebar.success(f"✅ 已加载：{case_opt}")
-        st.sidebar.info(case['description'])
+    _notice = st.session_state.pop("_loaded_case_notice", None)
+    if _notice:
+        st.sidebar.success(f"✅ 已加载：{_notice[0]}")
+        if _notice[1]:
+            st.sidebar.info(_notice[1])
+    if st.session_state.selected_case != "手动输入特征":
+        st.sidebar.button(
+            "↻ 重新加载当前病例",
+            key="btn_reload_case",
+            on_click=_apply_case_to_session,
+            args=(st.session_state.selected_case,),
+        )
 
     # ========== 输入区域 ==========
-    with st.container():
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">📝 临床特征采集（15 项）</div>', unsafe_allow_html=True)
-        st.caption("请根据患者实际情况，对以下 15 项症状/体征的程度进行评分（0 = 无 / 1 = 极重）。每项均附有中医诊断学释义。")
-        st.markdown("")
-
-        feature_inputs = {}
-        col_clinical, col_tongue = st.columns([3, 2])
-
-        with col_clinical:
-            st.markdown("#### 🩺 临床症状（12 项）")
-            for fn in FEATURE_GROUPS['临床症状']:
-                feature_inputs[fn] = st.slider(
-                    fn, min_value=0.0, max_value=1.0, step=0.05,
-                    value=float(st.session_state.feature_values[fn]),
-                    help=FEATURE_DESCRIPTIONS.get(fn, ''),
-                    key=f"sld_{fn}",
+    feature_inputs = _current_feature_inputs()
+    if current_module == "input":
+        st.markdown('<div id="feature-input"></div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="section-title">📝 临床特征采集（15 项）</div>', unsafe_allow_html=True)
+            c_intro, c_demo = st.columns([4, 1])
+            with c_intro:
+                st.caption(
+                    "评分范围 0 = 无 / 1 = 极重；每项鼠标悬停可查看中医诊断学释义。"
+                    "分析后仍可修改并重新生成结果。"
+                )
+            with c_demo:
+                st.button(
+                    "一键加载演示病例",
+                    key="btn_load_demo_case",
+                    on_click=_apply_case_to_session,
+                    args=(DEMO_CASE,),
+                    help=f"加载「{DEMO_CASE}」的完整四诊特征，适合现场路演快速演示。",
+                    width="stretch",
                 )
 
-        with col_tongue:
-            st.markdown("#### 👅 舌象与脉象（3 项）")
-            for fn in FEATURE_GROUPS['舌脉特征']:
-                feature_inputs[fn] = st.slider(
-                    fn, min_value=0.0, max_value=1.0, step=0.05,
-                    value=float(st.session_state.feature_values[fn]),
-                    help=FEATURE_DESCRIPTIONS.get(fn, ''),
-                    key=f"sld_{fn}",
+            _restore_slider_widget_state(feature_inputs)
+            clinical_features = FEATURE_GROUPS['临床症状']
+            col_clinical_1, col_clinical_2, col_tongue = st.columns([2.4, 2.4, 2])
+
+            with col_clinical_1:
+                st.markdown("#### 🩺 临床症状 · 1/2")
+                for fn in clinical_features[:6]:
+                    label = f"{fn}（{FEATURE_ATTRIBUTES.get(fn, '')}）"
+                    feature_inputs[fn] = st.slider(
+                        label, min_value=0.0, max_value=1.0, step=0.05,
+                        help=create_feature_tooltip(fn),
+                        key=f"sld_{fn}",
+                    )
+
+            with col_clinical_2:
+                st.markdown("#### 🩺 临床症状 · 2/2")
+                for fn in clinical_features[6:]:
+                    label = f"{fn}（{FEATURE_ATTRIBUTES.get(fn, '')}）"
+                    feature_inputs[fn] = st.slider(
+                        label, min_value=0.0, max_value=1.0, step=0.05,
+                        help=create_feature_tooltip(fn),
+                        key=f"sld_{fn}",
+                    )
+
+            with col_tongue:
+                st.markdown("#### 👅 舌象与脉象（3 项）")
+                for fn in FEATURE_GROUPS['舌脉特征']:
+                    label = f"{fn}（{FEATURE_ATTRIBUTES.get(fn, '')}）"
+                    feature_inputs[fn] = st.slider(
+                        label, min_value=0.0, max_value=1.0, step=0.05,
+                        help=create_feature_tooltip(fn),
+                        key=f"sld_{fn}",
+                    )
+
+            for fn in FEATURE_NAMES:
+                st.session_state.feature_values[fn] = feature_inputs[fn]
+
+            _, c_btn, _ = st.columns([2, 3, 2])
+            with c_btn:
+                predict_clicked = st.button(
+                    "🔍 开始辨证分析 · 生成诊断报告",
+                    width="stretch",
                 )
-            st.markdown("")
-            st.markdown("""
-            <div style="padding:14px 16px;background:rgba(27,94,32,0.06);border-radius:12px;border-left:4px solid #43a047;">
-            <b style="color:#1b5e20;">💡 操作提示</b><br>
-            <span style="font-size:0.85rem;color:#37474f;line-height:1.6;">
-            可先从左侧「典型病例库」一键加载证型特征，再点击下方「🔍 开始辨证分析」查看完整诊断报告。
-            </span></div>
-            """, unsafe_allow_html=True)
+                if predict_clicked:
+                    st.session_state["diagnosis_done"] = True
+                    st.session_state["current_module"] = "conclusion"
+                    st.session_state["scroll_to_module_top"] = True
+                    st.rerun()
 
-        for fn in FEATURE_NAMES:
-            st.session_state.feature_values[fn] = feature_inputs[fn]
 
-        st.markdown("")
-        _, c_btn, _ = st.columns([1, 3, 1])
-        with c_btn:
-            predict_clicked = st.button("🔍 开始辨证分析 · 生成诊断报告")
-            if predict_clicked:
-                st.session_state["diagnosis_done"] = True
+        if st.session_state.pop("scroll_to_module_top", False):
+            _schedule_scroll_to_top()
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
+        return
     # ========== 诊断结果 ==========
-    if not st.session_state.get("diagnosis_done", False):
+    if not diagnosis_done:
         return
 
     fv = np.array([feature_inputs[f] for f in FEATURE_NAMES])
-    result = predict_syndrome(model, fv)
-    shap_dict = get_shap_values(explainer, fv)
+    with st.spinner("正在进行机器学习辨证与 SHAP 归因分析…"):
+        result = predict_syndrome(model, fv)
+        shap_dict = get_shap_values(explainer, fv)
     pred_s = result['predicted_syndrome']
     probs = result['probabilities']
     conf = result['confidence']
-    risk_level, risk_desc = calculate_risk_score(probs)
+    confidence_level, confidence_desc = calculate_confidence_level(probs)
     info = SYNDROME_INFO.get(pred_s, {})
     treatment = SYNDROME_TREATMENT.get(pred_s, {})
 
-    # ----- 结果 Hero -----
+    # ----- 结果摘要 -----
     icon = get_syndrome_icon(pred_s)
-    st.markdown(f"""
-    <div class="diagnosis-hero">
-        <div class="hero-label">◆ 辨证诊断结论</div>
-        <div class="hero-value">{icon} {pred_s}证</div>
-        <div class="hero-desc">{info.get('description', '')}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ----- 4 KPI -----
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f"""<div class="kpi-card"><div class="kpi-icon">🎯</div>
-        <div class="kpi-value">{conf*100:.1f}%</div><div class="kpi-label">主证匹配度</div></div>""", unsafe_allow_html=True)
-    with c2:
-        order = sorted(probs.values(), reverse=True)
-        gap = (order[0] - order[1]) if len(order)>=2 else 0
-        st.markdown(f"""<div class="kpi-card"><div class="kpi-icon">📏</div>
-        <div class="kpi-value">{gap*100:.1f}%</div><div class="kpi-label">与次证差距</div></div>""", unsafe_allow_html=True)
-    with c3:
-        st.markdown(f"""<div class="kpi-card"><div class="kpi-icon">⚖️</div>
-        <div class="kpi-value">{risk_level}</div><div class="kpi-label">诊断把握度评级</div></div>""", unsafe_allow_html=True)
-    with c4:
-        st.markdown(f"""<div class="kpi-card"><div class="kpi-icon">{icon}</div>
-        <div class="kpi-value">{sum(v>=0.15 for v in probs.values())} 类</div><div class="kpi-label">可疑相关证型</div></div>""", unsafe_allow_html=True)
-
-    # ----- 概率图 + 辨证证据 -----
-    col_prob, col_ev = st.columns([3, 4])
-    with col_prob:
-        with st.container():
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">📊 六类证型概率分布</div>', unsafe_allow_html=True)
-            st.plotly_chart(create_prob_chart(probs), width='stretch')
-            # 胶囊条
-            st.markdown("")
-            for s in SYNDROME_LABELS:
-                p = probs[s]
-                c = get_syndrome_color(s)
-                st.markdown(f"""
-                <div class="prob-bar">
-                  <div class="prob-bar-name">{get_syndrome_icon(s)} {s}</div>
-                  <div class="prob-bar-track">
-                    <div class="prob-bar-fill" style="width:{p*100:.1f}%;background:linear-gradient(90deg,{c}dd,{c}88);"></div>
-                  </div>
-                  <div class="prob-bar-value">{p*100:.1f}%</div>
-                </div>
-                """, unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_ev:
-        with st.container():
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown(f'<div class="section-title">🧾 诊断证据分析（{pred_s}）</div>', unsafe_allow_html=True)
-            st.caption("基于典型特征范围与当前输入值对比，给出「支持该证型的证据」与「不支持该证型的证据」")
-            support, against = build_evidence_list(feature_inputs, pred_s)
-            st.markdown(f"<b style='color:#1b5e20;'>✅ 支持该证型的特征（{len(support)} 项）</b>", unsafe_allow_html=True)
-            for f, v, ref, lvl in support:
-                st.markdown(f'''
-                <div class="evidence-item evidence-support">
-                  <span class="evidence-icon">✓</span>
-                  <span><b>{f}</b> = {v:.2f}（参考典型均值 {ref:.2f}）· <b>{lvl}</b></span>
-                </div>''', unsafe_allow_html=True)
-            st.markdown("")
-            if against:
-                st.markdown(f"<b style='color:#b71c1c;'>⚠️ 不完全支持的特征（{len(against)} 项）</b>", unsafe_allow_html=True)
-                for f, v, ref, reason in against:
-                    st.markdown(f'''
-                    <div class="evidence-item evidence-against">
-                      <span class="evidence-icon">!</span>
-                      <span><b>{f}</b> = {v:.2f}（参考典型均值 {ref:.2f}）· {reason}</span>
-                    </div>''', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    # ----- SHAP 多证型热力图（指定位置：概率+证据之后，核心病机之前） -----
-    with st.container():
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">🔥 各证型 SHAP 值分布 · 特征-证型关联热力图</div>', unsafe_allow_html=True)
-        st.caption("热力图展示当前患者各特征对 <b>六类证型预测</b> 的 SHAP 贡献方向与强度。<span style='color:#053061'>■ 深蓝</span>=强烈支持该证型（正向贡献），<span style='color:#8B0000'>■ 深红</span>=强烈不支持该证型（负向贡献），<span style='color:#eceff1'>■ 浅白</span>=中性接近 0。悬停单元格可查看精确数值与当前输入特征值。")
-        try:
-            fig_hm = create_shap_heatmap(shap_dict, fv)
-            st.plotly_chart(fig_hm, width='stretch')
-        except Exception as _e:
-            st.warning("SHAP 热力图渲染失败：%s" % str(_e))
-            # 输出结构化预览表格作为降级
-            try:
-                labels = [s for s in SYNDROME_LABELS if s in shap_dict]
-                if not labels:
-                    labels = list(SYNDROME_LABELS)
-                rows = {}
-                for s in labels:
-                    arr = np.asarray(shap_dict.get(s, np.zeros(len(FEATURE_NAMES)))).flatten()
-                    if len(arr) < len(FEATURE_NAMES):
-                        arr = np.pad(arr, (0, len(FEATURE_NAMES)-len(arr)))
-                    rows[s] = arr[:len(FEATURE_NAMES)]
-                df_hm = pd.DataFrame(rows, index=FEATURE_NAMES).round(4)
-                vmax_ab = float(df_hm.abs().max().max())
-                vmax_ab = max(vmax_ab, 1e-6)
-                st.dataframe(df_hm.style.background_gradient(cmap="RdBu", axis=None, vmin=-vmax_ab, vmax=vmax_ab), width='stretch', height=520)
-            except Exception:
-                pass
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ----- 核心病机 + SHAP -----
-    col_shap, col_patho = st.columns([3, 2])
-    with col_shap:
-        with st.container():
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            try:
-                ps = shap_dict[pred_s]
-                if hasattr(ps, 'shape') and len(ps.shape) > 1:
-                    ps = ps.flatten()
-            except Exception:
-                ps = np.zeros(len(FEATURE_NAMES))
-            st.plotly_chart(create_shap_fig(ps, fv, pred_s), width='stretch')
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_patho:
-        with st.container():
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">📘 核心病机与辨证要点</div>', unsafe_allow_html=True)
-            st.markdown(f"""
-            <div style="line-height:1.8;color:#37474f;font-size:0.95rem;">
-              <b style="color:#e65100;">▸ 核心病机：</b>{treatment.get('diagnosis_summary', '')}
-            </div>
-            <div style="height:1px;background:rgba(0,0,0,0.08);margin:14px 0;"></div>
-            <div style="line-height:1.8;color:#37474f;font-size:0.95rem;">
-              <b style="color:#e65100;">▸ 治疗立法：</b>{treatment.get('treatment_principle', '')}
-            </div>
-            <div style="height:1px;background:rgba(0,0,0,0.08);margin:14px 0;"></div>
-            <div style="line-height:1.7;color:#37474f;font-size:0.92rem;">
-              <b style="color:#e65100;">▸ 辨证关键词：</b>
-              {' · '.join(info.get('keywords', []))}
-            </div>
-            <div style="height:1px;background:rgba(0,0,0,0.08);margin:14px 0;"></div>
-            <div style="line-height:1.7;color:#546e7a;font-size:0.88rem;">
-              <b>📌 诊断把握说明：</b>{risk_desc}。
-              建议结合舌诊、脉诊、问诊四诊合参，综合判断后确立最终治则方药。
-            </div>
-            """, unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    # ========================================================================
-    # AI 智能解读 + 多轮聊天（模块1 + 模块2）
-    # ========================================================================
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-title" style="font-size:1.3rem;">🧠 AI 智能解读 &amp; 多轮对话</div>',
-        unsafe_allow_html=True,
+    probability_order = sorted(probs.values(), reverse=True)
+    probability_gap = (
+        probability_order[0] - probability_order[1]
+        if len(probability_order) >= 2 else 0
     )
-
-    llm_cfg = get_llm_config()
-    if llm_cfg.get("configured"):
-        st.caption("本模块仅解读 ML 模型已输出的证型、概率与 SHAP 贡献，不会独立重新诊断。"
-                   "当前已接入大模型（"
-                   f"{llm_cfg.get('provider','?')} / {llm_cfg.get('model','?')}"
-                   "），可自由追问。")
-    else:
-        st.caption("本模块仅解读 ML 模型已输出的证型、概率与 SHAP 贡献，不会独立重新诊断。"
-                   "⚠️ 当前未配置大模型，使用规则化降级版；自由追问能力有限，"
-                   "可通过环境变量 LLM_API_KEY / LLM_PROVIDER / LLM_BASE_URL / LLM_MODEL 启用完整对话。")
-
-    # --- 会话状态：按「当前辨证结果」绑定，辨证变了自动清空 ---
-    _session_key = (
-        f"chat_session__{pred_s}__"
-        f"{hash(tuple(sorted((probs or {}).items())))}"
-    )
-    if st.session_state.get("_last_diag_key") != _session_key:
-        st.session_state["chat_messages"] = []
-        st.session_state["chat_system_prompt"] = None
-        st.session_state["_first_interp_meta"] = None
-        st.session_state["_last_diag_key"] = _session_key
-
-    # --- ① 一键解读按钮 + 清空 + 徽章 ---
-    c1, c2, c3 = st.columns([3, 1, 1])
-    _btn_disabled = (probs is None or shap_dict is None)
-    with c1:
-        if st.button(
-            "🔍 大模型智能解读本次辨证结果",
-            disabled=_btn_disabled,
-            width='stretch',
-            key="btn_first_interp",
-        ):
-            try:
-                with st.spinner("AI 正在解读本次辨证结果，请稍候…"):
-                    symptoms = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[:12]}
-                    tongue   = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[12:]}
-
-                    st.session_state["chat_system_prompt"] = build_chat_system_prompt(
-                        symptoms=symptoms, tongue_pulse=tongue,
-                        probabilities=probs, shap_dict=shap_dict,
-                        feature_names=FEATURE_NAMES,
-                        syndrome_labels=SYNDROME_LABELS,
-                    )
-                    st.session_state["chat_messages"] = []
-
-                    ai_result = generate_llm_interpretation(
-                        symptoms=symptoms, tongue_pulse=tongue,
-                        probabilities=probs, shap_dict=shap_dict,
-                        feature_names=FEATURE_NAMES,
-                        syndrome_labels=SYNDROME_LABELS,
-                        use_llm=True,
-                    )
-                    st.session_state["chat_messages"].append({
-                        "role": "assistant", "content": ai_result["text"],
-                    })
-                    st.session_state["_first_interp_meta"] = {
-                        "source": ai_result["source"],
-                        "error": ai_result.get("error"),
-                    }
-            except Exception as e:
-                st.error(f"一键解读失败：{e}")
-    with c2:
-        if st.button("🗑 清空当前会话", width='stretch', key="btn_clear_chat"):
-            st.session_state["chat_messages"] = []
-            st.rerun()
-    with c3:
-        _badge_color = "#1b5e20" if llm_cfg.get("configured") else "#8d6e63"
-        _badge_text  = ("🛰 已接入大模型" if llm_cfg.get("configured")
-                        else "📝 规则化降级")
-        st.markdown(
-            f'<span style="display:inline-block;background:{_badge_color}1a;'
-            f'color:{_badge_color};border:1px solid {_badge_color}40;'
-            f'padding:6px 12px;border-radius:999px;font-size:0.82rem;'
-            f'font-weight:600;width:100%;text-align:center;margin-top:2px;">{_badge_text}</span>',
-            unsafe_allow_html=True,
-        )
-
-    # --- 会话历史渲染 ---
-    history = st.session_state.get("chat_messages", [])
-    if not history:
-        st.info("👆 点击上方「🔍 大模型智能解读本次辨证结果」按钮，即可自动生成第一轮解读回答；之后可继续自由追问。")
-    else:
-        for msg in history:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-        _meta = st.session_state.get("_first_interp_meta")
-        if _meta and _meta.get("error"):
-            st.warning(f"⚠️ 大模型调用已降级：{_meta['error'][:120]}")
-
-    # --- ② 聊天输入框（多轮追问） ---
-    if probs is not None:
-        prompt = st.chat_input(
-            "💬 继续追问：例如「气阴两虚和阴虚热盛怎么鉴别？」「饮食还有哪些禁忌？」",
-            key="chat_input",
-        )
-        if prompt:
-            st.session_state["chat_messages"].append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            if st.session_state.get("chat_system_prompt") is None:
-                symptoms = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[:12]}
-                tongue   = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[12:]}
-                st.session_state["chat_system_prompt"] = build_chat_system_prompt(
-                    symptoms=symptoms, tongue_pulse=tongue,
-                    probabilities=probs, shap_dict=shap_dict,
-                    feature_names=FEATURE_NAMES,
-                    syndrome_labels=SYNDROME_LABELS,
-                )
-
-            with st.chat_message("assistant"):
-                with st.spinner("思考中…"):
-                    try:
-                        if llm_cfg.get("configured"):
-                            reply = chat_with_patient_data(
-                                user_question=prompt,
-                                history=st.session_state["chat_messages"][:-1],
-                                system_prompt=st.session_state["chat_system_prompt"],
-                            )
-                        else:
-                            reply = fallback_chat_reply(prompt)
-                    except Exception as e:
-                        # API 失败：友好提示 + 规则化降级，ML+SHAP 不受影响
-                        reply = (
-                            f"⚠️ {str(e)}\n\n"
-                            + fallback_chat_reply(prompt)
-                        )
-
-                st.markdown(reply)
-                st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
-    else:
-        st.chat_input("请先完成辨证分析（点击页面底部的「🔍 开始辨证分析」按钮）", disabled=True)
-
-    # ----- 处方建议 -----
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="section-title" style="font-size:1.3rem;">💊 个性化处方建议（{pred_s}证）</div>', unsafe_allow_html=True)
-    st.caption("以下内容基于「辨证论治」原则，针对当前证型给出经典方剂与常用药物；实际处方须由执业中医师四诊合参后化裁使用。")
-
-    formula_info = treatment.get("formula", {})
-    c_formula, c_adjust = st.columns([3, 2])
-    with c_formula:
-        with st.container():
-            st.markdown('<div class="formula-card">', unsafe_allow_html=True)
-            st.markdown(f"""<div class="formula-title">推荐主方：{formula_info.get('name', '')}</div>""", unsafe_allow_html=True)
-            st.markdown(f"""<div style="font-size:0.85rem;color:#8d6e63;margin-bottom:14px;">🕮 {formula_info.get('source', '')}</div>""", unsafe_allow_html=True)
-            st.markdown('<div style="font-size:0.9rem;color:#5d4037;font-weight:600;margin-bottom:8px;">◆ 药物组成及参考剂量：</div>', unsafe_allow_html=True)
-            # ===== 渲染 herb-grid：3列栅格 + 君臣佐使视觉分组分隔线（不改任何药味信息） =====
-            herbs = list(formula_info.get('herbs', []))
-            total = len(herbs)
-            n_zhujun = max(1, round(total * 0.25)) if total >= 6 else min(2, total)   # 君 25%
-            n_zuochen = max(n_zhujun + 1, round(total * 0.60)) if total >= 10 else total
-            parts_html = []
-            for idx, (h, d) in enumerate(herbs):
-                parts_html.append(
-                    f'<div class="herb-tag"><span class="herb-tag-name">{h}</span>'
-                    f'<span class="herb-dose">{d}</span></div>'
-                )
-                # 视觉分组线：君->臣 之后插入
-                if idx + 1 == n_zhujun and n_zhujun < total:
-                    parts_html.append('<div class="herb-group-divider" aria-hidden="true"></div>')
-                # 视觉分组线：臣->佐使 之后插入
-                elif idx + 1 == n_zuochen and n_zuochen < total:
-                    parts_html.append('<div class="herb-group-divider" aria-hidden="true"></div>')
-            st.markdown(f'<div class="herb-grid">{"".join(parts_html)}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    with c_adjust:
-        with st.container():
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">⚖️ 随症加减</div>', unsafe_allow_html=True)
-            for item in treatment.get('addition_subtraction', []):
-                st.markdown(f'<div class="care-item"><span class="care-icon">▸</span><span>{item}</span></div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    # ----- 生活调摄 -----
-    with st.container():
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">🏡 生活调摄与饮食宜忌</div>', unsafe_allow_html=True)
-        lifes = treatment.get('lifestyle', [])
-        cols = st.columns(min(len(lifes), 4)) if lifes else []
-        for i, life in enumerate(lifes):
-            with cols[i % len(cols)]:
-                icons = ['🍽️', '🏃', '🧘', '😴']
-                top_colors = ['#ffb74d', '#81c784', '#64b5f6', '#ba68c8']
-                title_colors = ['#e65100', '#2e7d32', '#1565c0', '#6a1b9a']
-                icon_bgs = ['linear-gradient(135deg,#fff5e6 0%,#ffe0b2 100%)',
-                            'linear-gradient(135deg,#e8f5e9 0%,#c8e6c9 100%)',
-                            'linear-gradient(135deg,#e3f2fd 0%,#bbdefb 100%)',
-                            'linear-gradient(135deg,#f3e5f5 0%,#e1bee7 100%)']
-                parts = life.split("：", 1)
-                title, desc = (parts[0], parts[1]) if len(parts) == 2 else ("调摄建议", life)
-                st.markdown(f"""
-                <div style="background:linear-gradient(180deg,#ffffff 0%,#fefefe 100%);
-                            padding:18px 18px 16px 18px;
-                            border-radius:16px;
-                            border-top:4px solid {top_colors[i%4]};
-                            height:100%;
-                            margin:6px 8px 14px 8px;
-                            box-shadow:0 3px 10px rgba(16,42,18,0.05), 0 1px 2px rgba(16,42,18,0.03);
-                            transition: transform .2s ease, box-shadow .2s ease;"
-                     onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 18px rgba(16,42,18,0.08), 0 2px 4px rgba(16,42,18,0.04)';"
-                     onmouseout="this.style.transform='';this.style.boxShadow='';">
-                  <div style="font-size:1.75rem;margin-bottom:6px;
-                              width:40px;height:40px;display:flex;align-items:center;justify-content:center;
-                              border-radius:12px;background:{icon_bgs[i%4]};
-                              box-shadow:inset 0 1px 0 rgba(255,255,255,0.9);">{icons[i%4]}</div>
-                  <div style="font-weight:750;color:{title_colors[i%4]};margin-bottom:6px;font-size:0.98rem;
-                              letter-spacing:0.2px;">{title}</div>
-                  <div style="font-size:0.86rem;color:#5d4037;line-height:1.8;word-break:break-word;">{desc}</div>
-                </div>
-                """, unsafe_allow_html=True)
-        st.markdown("")
-        st.markdown("""
-        <div style="padding:16px 20px 16px 20px;
-                    background:linear-gradient(135deg,#fff5f5 0%,#ffe9e9 100%);
-                    border-radius:16px;
-                    border-left:4px solid #e53935;
-                    border-top:1px solid rgba(229,57,53,0.15);
-                    box-shadow:0 2px 10px rgba(183,28,28,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
-                    font-size:0.88rem;color:#8a1a1a;line-height:1.85;">
-            <div style="display:flex;align-items:flex-start;gap:12px;">
-              <div style="flex-shrink:0;width:34px;height:34px;border-radius:10px;
-                          background:rgba(229,57,53,0.10);
-                          display:flex;align-items:center;justify-content:center;
-                          font-size:1.1rem;">⚕️</div>
-              <div><b style="font-size:0.92rem;color:#b71c1c;">免责声明：</b>本系统为中医辅助辨证科研教学工具，所提供的证型分析、概率分布、SHAP 可解释性分析、方剂建议与调摄指导均<b>仅供科研教学参考</b>，不构成医疗处方、诊断意见或治疗方案。本系统中的证型预测由机器学习模型（随机森林）输出，大模型仅做科普解读，不能替代执业中医师的四诊合参与辨证论治。具体诊断与用药请务必由<b>执业中医师</b>面诊后确定，切勿自行抓药服用或延误就医。</div>
+    related_count = sum(value >= 0.15 for value in probs.values())
+    result_summary_html = f"""
+    <div class="result-summary">
+        <div>
+            <div class="result-summary-kicker">辨证分析结果</div>
+            <div class="result-summary-title">{icon} {pred_s}证</div>
+            <div class="result-summary-desc">{info.get('description', '')}</div>
+        </div>
+        <div class="result-summary-metrics">
+            <div class="result-summary-metric">
+                <strong>{conf*100:.1f}%</strong>
+                <span>主证匹配度</span>
+            </div>
+            <div class="result-summary-metric">
+                <strong>{confidence_level}</strong>
+                <span>辨证置信度</span>
+            </div>
+            <div class="result-summary-metric">
+                <strong>{probability_gap*100:.1f}%</strong>
+                <span>与次证差距</span>
+            </div>
+            <div class="result-summary-metric">
+                <strong>{related_count} 类</strong>
+                <span>可疑相关证型</span>
             </div>
         </div>
-        """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    </div>
+    """
+    if current_module == "conclusion":
+        st.markdown(result_summary_html, unsafe_allow_html=True)
+
+    # ----- 仅渲染左侧导航当前选中的结果模块 -----
+    if current_module == "conclusion":
+        with st.container():
+            render_result_module_header(
+                "module-conclusion", "01", "📊", "辨证结论",
+                "查看六类证型概率、诊断证据与本次辨证的可靠程度。",
+            )
+            col_prob, col_ev = st.columns([2, 3])
+            with col_prob:
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">📊 六类证型概率分布</div>', unsafe_allow_html=True)
+                    st.plotly_chart(
+                        create_prob_chart(probs),
+                        use_container_width=True,
+                        config={'scrollZoom': False, 'displayModeBar': False},
+                    )
+                    st.markdown("")
+                    for syndrome in SYNDROME_LABELS:
+                        probability = probs[syndrome]
+                        color = get_syndrome_color(syndrome)
+                        st.markdown(f"""
+                        <div class="prob-bar">
+                          <div class="prob-bar-name">{get_syndrome_icon(syndrome)} {syndrome}</div>
+                          <div class="prob-bar-track">
+                            <div class="prob-bar-fill" style="width:{probability*100:.1f}%;background:linear-gradient(90deg,{color}dd,{color}88);"></div>
+                          </div>
+                          <div class="prob-bar-value">{probability*100:.1f}%</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+            with col_ev:
+                with st.container(border=True):
+                    st.markdown(f'<div class="section-title">🧾 诊断证据分析（{pred_s}）</div>', unsafe_allow_html=True)
+                    st.caption("基于典型特征范围与当前输入值对比，列出支持与存疑证据。")
+                    support, against = build_evidence_list(feature_inputs, pred_s)
+                    st.markdown(f"<b style='color:#1b5e20;'>✅ 支持该证型的特征（{len(support)} 项）</b>", unsafe_allow_html=True)
+                    for f, v, ref, lvl in support:
+                        st.markdown(f'''
+                        <div class="evidence-item evidence-support">
+                          <span class="evidence-icon">✓</span>
+                          <span><b>{f}</b> = {v:.2f}（参考典型均值 {ref:.2f}）· <b>{lvl}</b></span>
+                        </div>''', unsafe_allow_html=True)
+                    if against:
+                        st.markdown(f"<b style='color:#b71c1c;'>⚠️ 不完全支持的特征（{len(against)} 项）</b>", unsafe_allow_html=True)
+                        for f, v, ref, reason in against:
+                            st.markdown(f'''
+                            <div class="evidence-item evidence-against">
+                              <span class="evidence-icon">!</span>
+                              <span><b>{f}</b> = {v:.2f}（参考典型均值 {ref:.2f}）· {reason}</span>
+                            </div>''', unsafe_allow_html=True)
+
+    if current_module == "attribution":
+        with st.container():
+            render_result_module_header(
+                "module-attribution", "02", "🔎", "归因依据",
+                "通过 SHAP 判断哪些四诊特征推动了当前证型判断。",
+            )
+            col_shap, col_patho = st.columns([3, 2])
+            with col_shap:
+                with st.container(border=True):
+                    st.markdown(f'<div class="section-title">📈 主证型关键特征 SHAP 贡献（{pred_s}）</div>', unsafe_allow_html=True)
+                    try:
+                        ps = shap_dict[pred_s]
+                        if hasattr(ps, 'shape') and len(ps.shape) > 1:
+                            ps = ps.flatten()
+                    except Exception:
+                        ps = np.zeros(len(FEATURE_NAMES))
+                    st.plotly_chart(
+                        create_shap_fig(ps, fv, pred_s),
+                        use_container_width=True,
+                        config={'scrollZoom': False, 'displayModeBar': False},
+                    )
+
+            with col_patho:
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">📘 核心病机与辨证要点</div>', unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <div style="line-height:1.8;color:#37474f;font-size:0.95rem;">
+                      <b style="color:#e65100;">▸ 核心病机：</b>{treatment.get('diagnosis_summary', '')}
+                    </div>
+                    <div style="height:1px;background:rgba(0,0,0,0.08);margin:14px 0;"></div>
+                    <div style="line-height:1.8;color:#37474f;font-size:0.95rem;">
+                      <b style="color:#e65100;">▸ 治疗立法：</b>{treatment.get('treatment_principle', '')}
+                    </div>
+                    <div style="height:1px;background:rgba(0,0,0,0.08);margin:14px 0;"></div>
+                    <div style="line-height:1.7;color:#37474f;font-size:0.92rem;">
+                      <b style="color:#e65100;">▸ 辨证关键词：</b>
+                      {' · '.join(info.get('keywords', []))}
+                    </div>
+                    <div style="height:1px;background:rgba(0,0,0,0.08);margin:14px 0;"></div>
+                    <div style="line-height:1.7;color:#546e7a;font-size:0.88rem;">
+                      <b>📌 诊断把握说明：</b>{confidence_desc}。
+                      建议结合舌诊、脉诊、问诊四诊合参，综合判断后确立最终治则方药。
+                    </div>
+                    """, unsafe_allow_html=True)
+
+            with st.expander("点击查看全量 SHAP 特征热力图", expanded=False):
+                st.markdown('<div class="section-title">🔥 特征 × 证型 SHAP 贡献矩阵（15 × 6）</div>', unsafe_allow_html=True)
+                st.markdown(
+                    "热力图展示当前患者各特征对 **六类证型预测** 的 SHAP 贡献方向与强度。"
+                    "<span style='color:#053061;font-weight:700;'>■ 深蓝</span> 表示强烈支持该证型，"
+                    "<span style='color:#8B0000;font-weight:700;'>■ 深红</span> 表示强烈不支持该证型，"
+                    "<span style='color:#455a64;font-weight:700;'>■ 浅色</span> 表示贡献接近中性。"
+                    "悬停单元格可查看精确数值与当前输入特征值。",
+                    unsafe_allow_html=True,
+                )
+                try:
+                    fig_hm = create_shap_heatmap(shap_dict, fv)
+                    st.plotly_chart(
+                        fig_hm,
+                        use_container_width=True,
+                        config={'scrollZoom': False, 'displayModeBar': False},
+                    )
+                except Exception as _e:
+                    st.warning("SHAP 热力图渲染失败：%s" % str(_e))
+                    try:
+                        labels = [s for s in SYNDROME_LABELS if s in shap_dict]
+                        if not labels:
+                            labels = list(SYNDROME_LABELS)
+                        rows = {}
+                        for s in labels:
+                            arr = np.asarray(shap_dict.get(s, np.zeros(len(FEATURE_NAMES)))).flatten()
+                            if len(arr) < len(FEATURE_NAMES):
+                                arr = np.pad(arr, (0, len(FEATURE_NAMES) - len(arr)))
+                            rows[s] = arr[:len(FEATURE_NAMES)]
+                        df_hm = pd.DataFrame(rows, index=FEATURE_NAMES).round(4)
+                        vmax_ab = float(df_hm.abs().max().max())
+                        vmax_ab = max(vmax_ab, 1e-6)
+                        st.dataframe(
+                            df_hm.style.background_gradient(
+                                cmap="RdBu", axis=None, vmin=-vmax_ab, vmax=vmax_ab
+                            ),
+                            width='stretch',
+                            height=520,
+                        )
+                    except Exception:
+                        pass
+
+    if current_module == "knowledge":
+        with st.container():
+            render_result_module_header(
+                "module-knowledge", "03", "📚", "方剂与调摄",
+                "仅展示经典方剂知识和调摄思路，不提供临床剂量。",
+            )
+            st.warning("本系统仅展示经典方剂知识，不提供临床剂量，严禁照方抓药")
+            formula_info = treatment.get("formula", {})
+            with st.container(border=True):
+                st.markdown(f'<div class="section-title">📜 经典方剂溯源（{pred_s}证）</div>', unsafe_allow_html=True)
+                st.markdown(f"""<div class="formula-title">经典方剂：{formula_info.get('name', '')}</div>""", unsafe_allow_html=True)
+                st.markdown(f"""<div style="font-size:0.88rem;color:#5d4037;margin-bottom:14px;">🕮 出处：{formula_info.get('source', '')}</div>""", unsafe_allow_html=True)
+                st.markdown('<div style="font-size:0.9rem;color:#4e342e;font-weight:700;margin-bottom:8px;">◆ 经典方剂组成（药材名录，不含剂量）</div>', unsafe_allow_html=True)
+                herbs = list(formula_info.get('herbs', []))
+                total = len(herbs)
+                n_zhujun = max(1, round(total * 0.25)) if total >= 6 else min(2, total)
+                n_zuochen = max(n_zhujun + 1, round(total * 0.60)) if total >= 10 else total
+                parts_html = []
+                for idx, herb_name in enumerate(herbs):
+                    parts_html.append(
+                        f'<div class="herb-tag"><span class="herb-tag-name">{herb_name}</span></div>'
+                    )
+                    if idx + 1 == n_zhujun and n_zhujun < total:
+                        parts_html.append('<div class="herb-group-divider" aria-hidden="true"></div>')
+                    elif idx + 1 == n_zuochen and n_zuochen < total:
+                        parts_html.append('<div class="herb-group-divider" aria-hidden="true"></div>')
+                st.markdown(f'<div class="herb-grid">{"".join(parts_html)}</div>', unsafe_allow_html=True)
+
+            with st.container(border=True):
+                st.markdown('<div class="section-title">⚖️ 随证加减思路（不含剂量）</div>', unsafe_allow_html=True)
+                for item in treatment.get('addition_subtraction', []):
+                    st.markdown(f'<div class="care-item"><span class="care-icon">▸</span><span>{item}</span></div>', unsafe_allow_html=True)
+
+            with st.container(border=True):
+                st.markdown('<div class="section-title">🏡 生活调摄与饮食宜忌</div>', unsafe_allow_html=True)
+                lifes = treatment.get('lifestyle', [])
+                cols = st.columns(min(len(lifes), 4)) if lifes else []
+                for i, life in enumerate(lifes):
+                    with cols[i % len(cols)]:
+                        icons = ['🍽️', '🏃', '🧘', '😴']
+                        top_colors = ['#ffb74d', '#81c784', '#64b5f6', '#ba68c8']
+                        title_colors = ['#e65100', '#2e7d32', '#1565c0', '#6a1b9a']
+                        icon_bgs = ['linear-gradient(135deg,#fff5e6 0%,#ffe0b2 100%)',
+                                    'linear-gradient(135deg,#e8f5e9 0%,#c8e6c9 100%)',
+                                    'linear-gradient(135deg,#e3f2fd 0%,#bbdefb 100%)',
+                                    'linear-gradient(135deg,#f3e5f5 0%,#e1bee7 100%)']
+                        parts = life.split("：", 1)
+                        title, desc = (parts[0], parts[1]) if len(parts) == 2 else ("调摄建议", life)
+                        st.markdown(f"""
+                        <div style="background:linear-gradient(180deg,#ffffff 0%,#fefefe 100%);
+                                    padding:18px 18px 16px 18px;
+                                    border-radius:12px;
+                                    border-top:4px solid {top_colors[i%4]};
+                                    height:100%;
+                                    margin:6px 0 14px 0;
+                                    box-shadow:0 3px 10px rgba(16,42,18,0.05), 0 1px 2px rgba(16,42,18,0.03);">
+                          <div style="font-size:1.75rem;margin-bottom:6px;
+                                      width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+                                      border-radius:10px;background:{icon_bgs[i%4]};">
+                            {icons[i%4]}
+                          </div>
+                          <div style="font-weight:750;color:{title_colors[i%4]};margin-bottom:6px;font-size:0.98rem;">{title}</div>
+                          <div style="font-size:0.86rem;color:#5d4037;line-height:1.8;word-break:break-word;">{desc}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+    if current_module == "ai":
+        with st.container():
+            render_result_module_header(
+                "module-ai", "04", "🧠", "AI 解读与报告",
+                "结合中医理论解读病机，并可导出本病例教学分析报告。",
+            )
+            render_ai_interpretation(feature_inputs, probs, shap_dict, pred_s)
+
+            ai_text = st.session_state.get("_first_interp_text") or ""
+            if not ai_text:
+                symptoms = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[:12]}
+                tongue = {fn: feature_inputs[fn] for fn in FEATURE_NAMES[12:]}
+                ai_text = generate_llm_interpretation(
+                    symptoms=symptoms,
+                    tongue_pulse=tongue,
+                    probabilities=probs,
+                    shap_dict=shap_dict,
+                    feature_names=FEATURE_NAMES,
+                    syndrome_labels=SYNDROME_LABELS,
+                    use_llm=False,
+                )["text"]
+
+            report_text = build_teaching_report(
+                pred_s=pred_s,
+                probabilities=probs,
+                feature_values=feature_inputs,
+                shap_dict=shap_dict,
+                ai_text=ai_text,
+            )
+            with st.container(border=True):
+                st.markdown('<div class="section-title">📄 一键导出教学报告</div>', unsafe_allow_html=True)
+                st.caption(
+                    "TXT 报告包含当前四诊特征、六类证型概率、主证 SHAP Top 5、"
+                    "AI / 本地标准解读和完整免责声明。"
+                )
+                report_bytes = ("\ufeff" + report_text).encode("utf-8")
+                c_report_download, c_compare = st.columns(2)
+                with c_report_download:
+                    st.download_button(
+                        "⬇️ 导出本病例教学分析报告（TXT）",
+                        data=report_bytes,
+                        file_name=f"症智明辨教学分析报告_{datetime.now():%Y%m%d_%H%M}.txt",
+                        mime="text/plain; charset=utf-8",
+                        width="stretch",
+                        key="download_teaching_report",
+                    )
+                with c_compare:
+                    st.button(
+                        "生成阴虚与阳虚病案对比报告",
+                        disabled=True,
+                        help="V2.0 功能开发中",
+                        width="stretch",
+                        key="btn_compare_v2",
+                    )
+                    st.caption("病案对比教学功能将在 V2.0 开放。")
+
+            st.markdown(
+                """
+                <div style="padding:16px 20px 16px 20px;
+                            background:linear-gradient(135deg,#fff5f5 0%,#ffe9e9 100%);
+                            border-radius:12px;
+                            border-left:4px solid #e53935;
+                            border-top:1px solid rgba(229,57,53,0.15);
+                            box-shadow:0 2px 10px rgba(183,28,28,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+                            font-size:0.88rem;color:#8a1a1a;line-height:1.85;">
+                    <div style="display:flex;align-items:flex-start;gap:12px;">
+                      <div style="flex-shrink:0;width:34px;height:34px;border-radius:10px;
+                                  background:rgba(229,57,53,0.10);
+                                  display:flex;align-items:center;justify-content:center;
+                                  font-size:1.1rem;">⚕️</div>
+                      <div><b style="font-size:0.92rem;color:#b71c1c;">免责声明：</b>本系统为中医辅助辨证科研教学工具，所提供的证型分析、概率分布、SHAP 可解释性分析、方剂建议与调摄指导均<b>仅供科研教学参考</b>，不构成医疗处方、诊断意见或治疗方案。本系统中的证型预测由机器学习模型（随机森林）输出，大模型仅做科普解读，不能替代执业中医师的四诊合参与辨证论治。具体诊断与用药请务必由<b>执业中医师</b>面诊后确定，切勿自行抓药服用或延误就医。</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    if st.session_state.pop("scroll_to_module_top", False):
+        _schedule_scroll_to_top()
 
 
 # ============================================================
@@ -1745,7 +2323,7 @@ def main():
     st.sidebar.markdown("""
     <div style="color:rgba(255,255,255,0.8);text-align:center;font-size:0.78rem;line-height:1.7;">
     🌿 中医智能辨证系统<br>
-    辅助辨证 · 辨证论治 · 对症下药<br>
+    辅助辨证 · 辨证论治 · 方剂溯源<br>
     <span style="opacity:0.7;">仅供临床参考与学习使用</span>
     </div>""", unsafe_allow_html=True)
 
