@@ -42,17 +42,26 @@ from config import (
 
 # 首次进入页面时所有特征均按“无症状”处理，避免 0.5 全满的假数据观感
 DEFAULT_FEATURE_VALUE = 0.0
-FEATURE_STATE_VERSION = "2026-11-zero-default-v1"
+DEFAULT_FEATURE_LEVEL = 1
+FEATURE_LEVEL_LABELS = {
+    1: "无",
+    2: "轻",
+    3: "中",
+    4: "重",
+    5: "极重",
+}
+FEATURE_STATE_VERSION = "2026-11-five-level-v2"
 # 顶部“一键加载预设演示病例”默认使用的病例
 DEMO_CASE = "病例A · 气阴两虚型"
 
-# 左侧模块导航定义：输入区 + 四个结果模块
+# 左侧模块导航定义：输入区 + 五个结果模块
 MODULE_NAV_ITEMS = [
     ("input", "00", "🧾", "临床特征采集"),
     ("conclusion", "01", "📊", "辨证结论"),
     ("attribution", "02", "🔎", "归因依据"),
-    ("knowledge", "03", "📚", "方剂与调摄"),
-    ("ai", "04", "🧠", "AI 解读与报告"),
+    ("formula", "03", "📜", "经典方剂溯源与方义推演"),
+    ("care", "04", "🌿", "辨证施护与起居调摄推演"),
+    ("ai", "05", "🧠", "AI 解读与报告"),
 ]
 VALID_MODULES = {item[0] for item in MODULE_NAV_ITEMS}
 
@@ -746,6 +755,22 @@ html, body, .stApp, [data-testid="stAppViewContainer"] {
     font-size: 1rem;
     margin-top: 2px;
 }
+.formula-rationale {
+    background: rgba(255, 255, 255, 0.62);
+    border: 1px solid rgba(255, 183, 77, 0.30);
+    border-left: 4px solid var(--a-700);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 4px 0 18px 0;
+    color: #4e342e;
+    font-size: 0.9rem;
+    line-height: 1.85;
+}
+.formula-rationale-title {
+    color: var(--a-700);
+    font-weight: 750;
+    margin-bottom: 6px;
+}
 .herb-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -975,6 +1000,7 @@ html, body, .stApp, [data-testid="stAppViewContainer"] {
 }
 [data-testid="stSidebar"] .stButton > button {
     min-height: 42px;
+    height: auto;
     padding: 10px 13px;
     justify-content: flex-start;
     text-align: left;
@@ -985,6 +1011,11 @@ html, body, .stApp, [data-testid="stAppViewContainer"] {
     font-size: 0.86rem;
     font-weight: 650;
     letter-spacing: 0;
+}
+[data-testid="stSidebar"] .stButton > button p {
+    white-space: normal !important;
+    line-height: 1.45;
+    text-align: left;
 }
 [data-testid="stSidebar"] .stButton > button:hover {
     border-color: rgba(255,255,255,0.24);
@@ -1075,6 +1106,37 @@ div[data-testid="stSlider"] > div:nth-child(2) > div:nth-child(3) {
     border-radius: 8px;
     padding: 2px 8px;
     font-weight: 600;
+}
+.feature-level-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 16px 0;
+    color: #355e3b;
+    font-size: 0.84rem;
+}
+.feature-level-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: rgba(232, 245, 233, 0.92);
+    border: 1px solid rgba(76, 175, 80, 0.22);
+}
+.feature-level-legend b {
+    color: var(--p-700);
+}
+div[data-testid="stNumberInput"] label p {
+    color: var(--p-700);
+    font-size: 0.8rem;
+    font-weight: 650;
+}
+div[data-testid="stNumberInput"] input {
+    color: var(--p-700);
+    font-weight: 700;
+    text-align: center;
 }
 
 /* ========== Plotly 图表容器：更精致的卡片感 ========== */
@@ -1276,6 +1338,7 @@ SYNDROME_TREATMENT = {
         "formula": {
             "name": "生脉散合六味地黄丸加减",
             "source": "《医学启源》生脉散 + 《小儿药证直诀》六味地黄丸化裁",
+            "rationale": "结合患者“气阴两虚”病机，治以益气养阴、健脾生津，兼顾固肾。方中以生脉散（太子参、麦冬、五味子）益气养阴、敛汗生脉，配伍黄芪补气升阳，针对气虚津伤之本；辅以六味地黄丸（熟地黄、山萸肉、怀山药等）滋补肝肾之阴，针对阴虚内热之标；白术、茯苓、甘草健脾和中，使气血生化有源。诸药合用，共奏气阴双补、标本兼顾之效。（教学提示：此推演旨在训练学生“以法统方”的辨证思维。）",
             "herbs": [
                 "黄芪", "太子参", "麦冬", "五味子",
                 "生地黄", "山萸肉", "怀山药", "茯苓",
@@ -1289,12 +1352,32 @@ SYNDROME_TREATMENT = {
             "失眠心悸者：加 酸枣仁、远志 养心安神",
             "腰膝酸软甚者：加 桑寄生、川牛膝 补肝肾强筋骨",
         ],
-        "lifestyle": [
-            "劳逸结合：避免长时间伏案劳作及剧烈运动，宜太极拳、八段锦等柔和锻炼",
-            "饮食调养：以清淡甘润为主，可常食山药粥、莲子羹、银耳百合汤；忌辛辣燥烈、浓茶咖啡",
-            "情志调摄：保持心境平和，避免过度思虑耗伤气阴",
-            "作息规律：午间小憩 20-30 分钟，亥时（21-23点）前就寝，以养阴蓄气",
+        "care_theory": [
+            {
+                "icon": "🏃",
+                "title": "运动治则",
+                "text": "气阴两虚者，气不摄津，阴不敛阳，宜选择太极拳、八段锦等柔和运动以益气养阴，切忌大汗淋漓。大汗不仅伤阴，更易耗气，加重虚损。",
+            },
+            {
+                "icon": "🍽️",
+                "title": "施膳逻辑",
+                "text": "阴虚则生内热，故饮食当以甘润生津为原则。山药粥健脾益气，银耳百合汤滋阴清热。忌食辛辣燥烈之品，以防“火上浇油”更伤阴津。",
+            },
+            {
+                "icon": "🧘",
+                "title": "情志与病机",
+                "text": "患者常因久病而思虑过度。中医认为“思伤脾”，脾虚则气血生化之源不足，加重气阴两虚。故需保持心境平和。",
+            },
+            {
+                "icon": "🌙",
+                "title": "起居治则",
+                "text": "肝开窍于目，肝肾阴虚则目失所养。应避免久视伤血，子时（23点）前入睡，以顺应肝胆经气之生发，滋养肝阴。",
+            },
         ],
+        "reflection": {
+            "question": "若该患者（气阴两虚证）近期因情绪波动，突然出现口苦咽干、心烦易怒、舌边红等新症状，在临床带教中，应提示学生考虑合并了哪种病机？在饮食调护上应做何调整？",
+            "hint": "应提示学生考虑肝郁化火、横逆犯胃，兼有郁热伤津之象。饮食调护宜在益气养阴的基础上兼顾清肝解郁，少食辛辣燥烈与醇酒，可适量选用玫瑰花、菊花等疏肝清热之品，并重视情志疏导。",
+        },
     },
 
     "痰热互结": {
@@ -1303,6 +1386,7 @@ SYNDROME_TREATMENT = {
         "formula": {
             "name": "黄连温胆汤合小陷胸汤加减",
             "source": "《六因条辨》黄连温胆汤 + 《伤寒论》小陷胸汤化裁",
+            "rationale": "结合“痰热互结、阻滞中焦”的病机，治以清热化痰、理气散结、健脾和中。方中黄连温胆汤（黄连、法半夏、竹茹、枳实、陈皮、茯苓等）清化痰热、和胃降逆；小陷胸汤（黄连、法半夏、瓜蒌）辛开苦降、宽胸散结；柴胡、黄芩疏肝清胆，浙贝母、胆南星增强化痰散结之力，甘草调和诸药。全方清热而不忘理气，化痰而兼顾健脾，使痰热分消、气机通畅。（教学提示：此推演旨在训练学生“以法统方”的辨证思维。）",
             "herbs": [
                 "黄连", "黄芩", "法半夏", "竹茹",
                 "枳实", "全瓜蒌", "陈皮", "茯苓",
@@ -1316,12 +1400,32 @@ SYNDROME_TREATMENT = {
             "纳呆食少者：加 神曲、炒谷麦芽 健胃消食",
             "痰浊壅盛、胸闷咯痰者：加 薤白、桔梗 开胸化痰",
         ],
-        "lifestyle": [
-            "饮食控制：严格限制肥甘厚味、甜腻糕点及烈性酒；主食粗细搭配，多食芹菜、冬瓜、海带等化痰利湿之品",
-            "加强运动：每日散步 30-45 分钟、或快走/慢跑，促进痰湿运化；体重超标者需循序渐进减重",
-            "情志调理：避免忧思郁怒，保持情志舒畅，以防肝郁化火炼痰",
-            "环境起居：居住宜干燥通风，避免久居潮湿之地；勿熬夜伤肝脾",
+        "care_theory": [
+            {
+                "icon": "🏃",
+                "title": "运动治则",
+                "text": "痰湿内阻者宜以适度运动振奋阳气、运化水湿。可选择快走、八段锦或舒展训练，以微微汗出为度；痰热未清时不宜骤然剧烈运动，以免气机逆乱、津随汗泄。",
+            },
+            {
+                "icon": "🍽️",
+                "title": "施膳逻辑",
+                "text": "脾为生痰之源，痰热互结者当以清热化痰、健脾利湿为原则。宜选芹菜、冬瓜、海带等清淡之品，少食肥甘厚味、甜腻糕点及醇酒辛辣，以断痰湿化热之源。",
+            },
+            {
+                "icon": "🧘",
+                "title": "情志与病机",
+                "text": "肝主疏泄，情志郁结则气机不畅，郁久化火并可炼液成痰。故应保持心境舒畅，避免忧思郁怒，使肝气条达、脾胃升降有序。",
+            },
+            {
+                "icon": "🌙",
+                "title": "起居治则",
+                "text": "痰湿得温则行、得寒则凝，居室宜干燥通风，避免久居潮湿环境。作息当规律，避免熬夜伤及肝脾，使水湿运化有常。",
+            },
         ],
+        "reflection": {
+            "question": "若患者痰热证候减轻后，逐渐出现食欲不振、便溏、舌苔白腻，教学时应提示学生考虑何种病机转化？调护重点应如何调整？",
+            "hint": "应提示学生考虑痰热渐化而脾虚湿困未复。调护重点宜由单纯清热化痰转向健脾化湿、理气和中，饮食更应避免生冷甜腻，并观察痰湿与脾虚的消长。",
+        },
     },
 
     "肝肾阴虚": {
@@ -1330,6 +1434,7 @@ SYNDROME_TREATMENT = {
         "formula": {
             "name": "杞菊地黄丸合一贯煎化裁",
             "source": "《麻疹全书》杞菊地黄丸 + 《续名医类案》一贯煎加减",
+            "rationale": "结合“肝肾阴虚、虚热内生”的病机，治以滋补肝肾、育阴潜阳、明目益精。方中杞菊地黄丸以六味地黄丸（熟地黄、山萸肉、怀山药、茯苓、牡丹皮、泽泻）滋补肝肾之阴，枸杞子、杭菊花养肝明目；一贯煎以北沙参、麦冬、当归身滋阴养血，川楝子疏肝理气，使滋养而不滞。诸药合用，既补肝肾之本，又兼顾肝郁与目窍失养之标。（教学提示：此推演旨在训练学生“以法统方”的辨证思维。）",
             "herbs": [
                 "枸杞子", "杭菊花", "熟地黄", "山萸肉",
                 "怀山药", "茯苓", "牡丹皮", "泽泻",
@@ -1343,12 +1448,32 @@ SYNDROME_TREATMENT = {
             "遗精滑泄者：加 金樱子、芡实、莲须 固肾涩精",
             "失眠多梦：加 酸枣仁、夜交藤 养血安神",
         ],
-        "lifestyle": [
-            "护养肾精：节制房事，避免过度操劳耗损肾精",
-            "作息规律：子时（23点）前入睡，不熬夜以养肝阴；午间静卧片刻",
-            "食疗辅助：可常食枸杞菊花茶、黑芝麻糊、核桃黑豆粥、桑椹膏",
-            "用眼卫生：避免久视伤血，每用眼 40 分钟远眺休息 5 分钟，可配合眼部穴位按摩",
+        "care_theory": [
+            {
+                "icon": "🏃",
+                "title": "运动治则",
+                "text": "肝主筋、肾主骨，肝肾阴虚者宜练太极拳、八段锦等柔和功法，以养筋健骨、调畅气机。运动宜舒缓有度，切忌大汗淋漓，以免汗出伤阴、耗损肝肾之精。",
+            },
+            {
+                "icon": "🍽️",
+                "title": "施膳逻辑",
+                "text": "阴虚则内热，食疗当以甘润滋补为原则。枸杞子、黑芝麻、桑椹、黑豆等可滋养肝肾；少食辛辣温燥、煎炸炙煿之品，以防助火伤阴。",
+            },
+            {
+                "icon": "🧘",
+                "title": "情志与病机",
+                "text": "肝藏血、主疏泄，郁怒日久易化火伤阴。应保持情绪平稳，避免长期紧张与恼怒，使肝血得养、肝气条达。",
+            },
+            {
+                "icon": "🌙",
+                "title": "起居治则",
+                "text": "肝开窍于目，久视则伤血；肾主藏精，熬夜则耗精。宜子时前入睡，避免久视劳神，使肝肾精血得以休养。",
+            },
         ],
+        "reflection": {
+            "question": "若患者新出现头晕耳鸣、五心烦热、舌红少苔，教学时应如何判断阴虚与虚火的主次？饮食调护应侧重什么？",
+            "hint": "应提示学生考虑肝肾阴虚、虚火偏亢，病机重点由单纯阴亏转向阴虚火旺。饮食调护宜坚持甘润滋养，避免辛辣温燥，并兼顾清虚热与养肝明目。",
+        },
     },
 
     "热盛伤津": {
@@ -1357,6 +1482,7 @@ SYNDROME_TREATMENT = {
         "formula": {
             "name": "消渴方合白虎加人参汤加减",
             "source": "《丹溪心法》消渴方 + 《伤寒论》白虎加人参汤化裁",
+            "rationale": "结合“燥热炽盛、耗伤肺胃津液”的病机，治以清热泻火、生津止渴，兼顾益气护阴。方中白虎加人参汤以生石膏、知母清阳明气分实热，西洋参益气生津，粳米、炙甘草护胃和中；消渴方以黄连、天花粉、生地黄清热泻火、养阴生津，麦冬、葛根、黄芩、栀子清热润燥。全方清中有养，使热退而津复、气阴不伤。（教学提示：此推演旨在训练学生“以法统方”的辨证思维。）",
             "herbs": [
                 "生石膏（先煎）", "知母", "西洋参（另炖兑服）", "天花粉",
                 "生地黄", "黄连", "麦冬", "葛根",
@@ -1370,12 +1496,32 @@ SYNDROME_TREATMENT = {
             "心烦失眠、口舌生疮：加 竹叶心、莲子心、连翘心 清泻心火",
             "牙龈肿痛、口臭：加 升麻、牡丹皮 清泻胃火凉血",
         ],
-        "lifestyle": [
-            "饮食宜忌：严格忌食辛辣、烧烤、煎炸及温燥补品；宜多饮温水、淡茶水，多食苦瓜、黄瓜、梨、藕、绿豆等清热生津之品",
-            "环境调节：居室宜凉爽通风，避免高温暴晒；衣着透气轻薄",
-            "清热食疗：可服绿豆百合汤、冬瓜海带汤、西瓜翠衣煎水代茶",
-            "保持二便通畅：每日定时排便；小便黄赤者须警惕血糖波动，及时监测",
+        "care_theory": [
+            {
+                "icon": "🏃",
+                "title": "运动治则",
+                "text": "热盛伤津时应避免高温环境下的剧烈运动，可选清晨或傍晚缓步行走、呼吸吐纳等和缓活动，以不疲劳、不大汗为度。热邪未清而强行运动，易致津液更伤。",
+            },
+            {
+                "icon": "🍽️",
+                "title": "施膳逻辑",
+                "text": "燥热伤津，饮食当以清热生津、甘润为宜。苦瓜、黄瓜、梨、藕等可辅助清热生津，少食辛辣、烧烤、煎炸及温燥补品，以防助热伤津。",
+            },
+            {
+                "icon": "🧘",
+                "title": "情志与病机",
+                "text": "火热易扰心神，患者可出现心烦、急躁。应保持环境安静，避免情绪激动与过度劳神，使心神安定、火热渐平。",
+            },
+            {
+                "icon": "🌙",
+                "title": "起居治则",
+                "text": "热邪易伤津，起居宜凉爽通风，避免高温暴晒与熬夜。衣着宜透气，保持二便通畅，使邪热有外出之路。",
+            },
         ],
+        "reflection": {
+            "question": "若患者壮热渐退后反而出现神疲乏力、口渴自汗、脉细无力，教学时应提示学生考虑何种病机变化？调护重点应如何调整？",
+            "hint": "应提示学生考虑热邪耗气伤津，病机由热盛伤津转为气阴两伤。调护重点宜从单纯清热转向益气养阴、生津护胃，并避免过用苦寒损伤脾胃。",
+        },
     },
 
     "肝胃郁热": {
@@ -1384,6 +1530,7 @@ SYNDROME_TREATMENT = {
         "formula": {
             "name": "大柴胡汤合左金丸化裁",
             "source": "《金匮要略》大柴胡汤 + 《丹溪心法》左金丸加减",
+            "rationale": "结合“肝郁化火、横逆犯胃”的病机，治以清肝泻胃、理气解郁、通腑泄热。方中大柴胡汤以柴胡、黄芩和解少阳、清泄郁热，生大黄、枳实通腑泄热，法半夏、生姜、大枣和胃降逆；左金丸以黄连、吴茱萸清肝泻火、降逆制酸；白芍、郁金、川楝子柔肝疏肝、理气止痛。诸药合用，使肝火得清、胃气得降、腑气通畅。（教学提示：此推演旨在训练学生“以法统方”的辨证思维。）",
             "herbs": [
                 "柴胡", "黄芩", "黄连", "吴茱萸",
                 "生大黄（后下）", "枳实", "白芍", "法半夏",
@@ -1397,12 +1544,32 @@ SYNDROME_TREATMENT = {
             "胸胁胀痛、善太息：加 佛手、绿萼梅、玫瑰花 疏肝理气解郁",
             "头痛目赤、血压偏高：加 天麻、钩藤（后下）、夏枯草 平肝潜阳",
         ],
-        "lifestyle": [
-            "情志调理：首重调畅情志，保持心态平和；可练习正念、深呼吸、听舒缓音乐；遇事戒怒",
-            "饮食有节：忌暴饮暴食、忌醇酒辛辣、忌咖啡浓茶；宜少食多餐，晚餐七成饱",
-            "解郁食疗：可饮玫瑰花茶、佛手茶、陈皮菊花茶；多食萝卜、金橘、柚子等理气之品",
-            "运动疏泄：每日快走或慢跑 30 分钟，或练习瑜伽、八段锦「疏肝式」以疏解肝郁",
+        "care_theory": [
+            {
+                "icon": "🏃",
+                "title": "运动治则",
+                "text": "肝喜条达而恶抑郁，宜选择快走、八段锦等节律舒缓的运动以疏肝理气。运动以微汗为度，避免在愤怒或情绪激动时剧烈活动，以免肝火更盛。",
+            },
+            {
+                "icon": "🍽️",
+                "title": "施膳逻辑",
+                "text": "肝胃郁热者饮食宜有节，少食多餐，避免暴饮暴食及醇酒、辛辣、浓茶咖啡。可适量选用萝卜、金橘、佛手等理气之品，以助肝胃气机和降。",
+            },
+            {
+                "icon": "🧘",
+                "title": "情志与病机",
+                "text": "情志不遂是肝郁化火的重要诱因。应重视情志疏导，避免恼怒忧思，使肝气条达、胃气和降，防止郁火进一步伤及胃阴。",
+            },
+            {
+                "icon": "🌙",
+                "title": "起居治则",
+                "text": "肝胃郁热与作息失调、进食不节相关。宜规律作息、避免熬夜，饭后缓行以助运化，居室保持安静舒适，使肝胃得以调养。",
+            },
         ],
+        "reflection": {
+            "question": "若患者在清肝泻热后出现食欲减退、便溏、畏寒、舌淡苔白，教学时应提示学生警惕什么？后续调护应如何避免偏颇？",
+            "hint": "应提示学生警惕苦寒清降太过而损伤脾胃阳气，出现肝胃郁热未清与脾胃虚寒并见。调护应顾护脾胃，饮食避免生冷，清热不可过剂，并动态复核证候。",
+        },
     },
 
     "阴阳两虚": {
@@ -1411,6 +1578,7 @@ SYNDROME_TREATMENT = {
         "formula": {
             "name": "金匮肾气丸合水陆二仙丹化裁",
             "source": "《金匮要略》肾气丸 + 《洪氏集验方》水陆二仙丹化裁",
+            "rationale": "结合“阴损及阳、阴阳俱虚”的病机，治以温阳滋阴、补肾固摄，兼补脾益气。方中金匮肾气丸以熟附子、桂枝温补肾阳，熟地黄、山萸肉、怀山药滋阴填精，取“阴中求阳”之意；茯苓、泽泻、牡丹皮利水渗湿、泄浊行滞；水陆二仙丹以金樱子、芡实固肾涩精，黄芪、白术健脾益气，补骨脂、淫羊藿温肾助阳。全方阴阳并补、脾肾兼顾，使阳气渐复而阴精不伤。（教学提示：此推演旨在训练学生“以法统方”的辨证思维。）",
             "herbs": [
                 "熟附子（先煎）", "桂枝", "熟地黄", "山萸肉",
                 "怀山药", "茯苓", "牡丹皮", "泽泻",
@@ -1425,13 +1593,32 @@ SYNDROME_TREATMENT = {
             "五更泄、便溏：加 肉豆蔻、吴茱萸、五味子 温脾暖肾涩肠",
             "胸闷心悸、唇舌紫暗：加 丹参、桃仁、红花 活血化瘀通络",
         ],
-        "lifestyle": [
-            "防寒保暖：特别注意腰腹、下肢及足部保暖；睡前温水泡脚 15-20 分钟",
-            "饮食温补：宜食羊肉、牛肉、韭菜、生姜、桂圆等温阳之品；严忌生冷瓜果、冰饮凉菜",
-            "节制养精：严格节制房事，休养生息，保养元阴元阳",
-            "适度运动：以不出汗或微汗的柔和运动为宜，如晒太阳「天灸」、八段锦、静坐养生；避免大汗淋漓耗散阳气",
-            "水肿护理：下肢浮肿者宜抬高患肢；每日监测体重及出入量，发现异常及时就医",
+        "care_theory": [
+            {
+                "icon": "🏃",
+                "title": "运动治则",
+                "text": "阴阳两虚者宜温养而不宜耗散，可选择八段锦、静坐、缓步等柔和活动，并适度接受温和日晒以助阳气。运动以微汗为度，切忌大汗淋漓，以免阳随汗泄、阴液更伤。",
+            },
+            {
+                "icon": "🍽️",
+                "title": "施膳逻辑",
+                "text": "阴阳俱虚者宜平补阴阳、温而不燥。山药、黑豆、核桃等可健脾补肾，羊肉、生姜等温性食物宜适量，少食生冷瓜果与冰饮，也不可过用辛辣燥烈之品。",
+            },
+            {
+                "icon": "🧘",
+                "title": "情志与病机",
+                "text": "久病易致思虑忧惧，恐则伤肾、思则伤脾。应给予情志支持，帮助患者保持心境平和，使脾肾气机调畅、阴阳渐复。",
+            },
+            {
+                "icon": "🌙",
+                "title": "起居治则",
+                "text": "阳虚失温则畏寒，阴虚失养则易疲劳。应注意腰腹与足部保暖，规律作息，睡前可温水泡脚，避免熬夜与过度劳累，以护养元阴元阳。",
+            },
         ],
+        "reflection": {
+            "question": "若患者在畏寒肢冷、下肢浮肿的同时新出现口干、夜间盗汗、舌红少苔，教学时应如何理解阴阳两虚中的虚火表现？调护应避免哪些偏颇？",
+            "hint": "应提示学生考虑阴阳两虚而虚火偏亢，属于阴阳俱损、虚热内生之复杂证候。调护应避免温阳过于温燥、滋阴过于滋腻，饮食宜平补阴阳并动态观察水肿、口干与舌象变化。",
+        },
     },
 }
 
@@ -1575,22 +1762,96 @@ def _get_herb_explanation(herb_name):
 # ============================================================
 # 会话状态：保证侧栏病例、顶部预设按钮与滑块始终同步
 # ============================================================
-def _set_feature_values(values):
-    """同时更新业务状态和滑块控件状态，避免 Streamlit 旧 widget state 覆盖新值。"""
-    normalized = {
-        fn: float(values.get(fn, DEFAULT_FEATURE_VALUE))
+def _normalize_feature_level(value):
+    """将界面输入限制为 1-5 的整数程度等级。"""
+    try:
+        level = int(round(float(value)))
+    except (TypeError, ValueError):
+        level = DEFAULT_FEATURE_LEVEL
+    return min(5, max(1, level))
+
+
+def _level_to_feature_value(level):
+    """仅模型内部使用：1-5 级映射为原有 0.0-1.0 输入范围。"""
+    return (_normalize_feature_level(level) - 1) / 4.0
+
+
+def _value_to_feature_level(value):
+    """将病例中的 0.0-1.0 特征映射到最接近的 1-5 级。"""
+    try:
+        normalized = min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        normalized = DEFAULT_FEATURE_VALUE
+    return _normalize_feature_level(round(normalized * 4) + 1)
+
+
+def _feature_levels_from_values(values):
+    return {
+        fn: _value_to_feature_level(values.get(fn, DEFAULT_FEATURE_VALUE))
         for fn in FEATURE_NAMES
     }
-    st.session_state.feature_values = normalized
-    for fn, value in normalized.items():
-        st.session_state[f"sld_{fn}"] = value
-    return normalized
+
+
+def _set_feature_levels(levels):
+    """同时更新等级、模型输入和两类控件，避免旧 widget state 覆盖新值。"""
+    normalized_levels = {
+        fn: _normalize_feature_level(levels.get(fn, DEFAULT_FEATURE_LEVEL))
+        for fn in FEATURE_NAMES
+    }
+    st.session_state.feature_levels = normalized_levels
+    st.session_state.feature_values = {
+        fn: _level_to_feature_value(level)
+        for fn, level in normalized_levels.items()
+    }
+    for fn, level in normalized_levels.items():
+        st.session_state[f"lvl_slider_{fn}"] = level
+        st.session_state[f"lvl_input_{fn}"] = level
+    return normalized_levels
+
+
+def _set_feature_values(values):
+    """兼容原有 0.0-1.0 病例数据，载入时转换为 1-5 级。"""
+    return _set_feature_levels(_feature_levels_from_values(values))
+
+
+def _record_feature_level(feature_name, level):
+    """只更新业务状态；控件同步由各 on_change 回调在重绘前完成。"""
+    level = _normalize_feature_level(level)
+    levels = st.session_state.get("feature_levels")
+    if not isinstance(levels, dict):
+        levels = {}
+    levels[feature_name] = level
+    st.session_state.feature_levels = levels
+
+    values = st.session_state.get("feature_values")
+    if not isinstance(values, dict):
+        values = {}
+    values[feature_name] = _level_to_feature_value(level)
+    st.session_state.feature_values = values
+
+
+def _on_feature_level_slider_change(feature_name):
+    level = _normalize_feature_level(
+        st.session_state.get(f"lvl_slider_{feature_name}", DEFAULT_FEATURE_LEVEL)
+    )
+    st.session_state[f"lvl_input_{feature_name}"] = level
+    _record_feature_level(feature_name, level)
+
+
+def _on_feature_level_input_change(feature_name):
+    level = _normalize_feature_level(
+        st.session_state.get(f"lvl_input_{feature_name}", DEFAULT_FEATURE_LEVEL)
+    )
+    st.session_state[f"lvl_slider_{feature_name}"] = level
+    _record_feature_level(feature_name, level)
 
 
 def _initialize_feature_state():
-    """首次进入或版本升级时将 15 项特征统一初始化为“无症状”。"""
+    """首次进入或版本升级时将 15 项特征统一初始化为 1 级“无症状”。"""
     if st.session_state.get("_feature_state_version") != FEATURE_STATE_VERSION:
-        _set_feature_values({fn: DEFAULT_FEATURE_VALUE for fn in FEATURE_NAMES})
+        _set_feature_levels(
+            {fn: DEFAULT_FEATURE_LEVEL for fn in FEATURE_NAMES}
+        )
         st.session_state.selected_case = "手动输入特征"
         st.session_state.case_selectbox = "手动输入特征"
         st.session_state["diagnosis_done"] = False
@@ -1598,14 +1859,30 @@ def _initialize_feature_state():
         st.session_state["_feature_state_version"] = FEATURE_STATE_VERSION
         return
 
-    values = st.session_state.get("feature_values")
-    if not isinstance(values, dict):
-        st.session_state.feature_values = {
-            fn: DEFAULT_FEATURE_VALUE for fn in FEATURE_NAMES
-        }
-    else:
-        for fn in FEATURE_NAMES:
-            st.session_state.feature_values.setdefault(fn, DEFAULT_FEATURE_VALUE)
+    values = st.session_state.get("feature_values", {})
+    levels = st.session_state.get("feature_levels")
+    if not isinstance(levels, dict):
+        levels = _feature_levels_from_values(
+            values if isinstance(values, dict) else {}
+        )
+    levels = {
+        fn: _normalize_feature_level(
+            levels.get(
+                fn,
+                _value_to_feature_level(
+                    values.get(fn, DEFAULT_FEATURE_VALUE)
+                    if isinstance(values, dict)
+                    else DEFAULT_FEATURE_VALUE
+                ),
+            )
+        )
+        for fn in FEATURE_NAMES
+    }
+    st.session_state.feature_levels = levels
+    st.session_state.feature_values = {
+        fn: _level_to_feature_value(level)
+        for fn, level in levels.items()
+    }
 
     if "selected_case" not in st.session_state:
         st.session_state.selected_case = "手动输入特征"
@@ -1666,12 +1943,62 @@ def _current_feature_inputs():
     }
 
 
-def _restore_slider_widget_state(feature_inputs):
-    """恢复被 Streamlit 清理的隐藏滑块控件状态。"""
+def _current_feature_levels():
+    """读取当前 1-5 级状态；缺失时从模型输入值安全回推。"""
+    stored_levels = st.session_state.get("feature_levels", {})
+    values = _current_feature_inputs()
+    return {
+        fn: _normalize_feature_level(
+            stored_levels.get(fn, _value_to_feature_level(values[fn]))
+            if isinstance(stored_levels, dict)
+            else _value_to_feature_level(values[fn])
+        )
+        for fn in FEATURE_NAMES
+    }
+
+
+def _restore_feature_level_widget_state(feature_inputs):
+    """恢复被 Streamlit 清理的隐藏滑块与数字输入控件状态。"""
+    levels = _current_feature_levels()
     for fn in FEATURE_NAMES:
-        widget_key = f"sld_{fn}"
-        if widget_key not in st.session_state:
-            st.session_state[widget_key] = feature_inputs[fn]
+        level = levels.get(fn, _value_to_feature_level(feature_inputs[fn]))
+        for widget_key in (f"lvl_slider_{fn}", f"lvl_input_{fn}"):
+            if widget_key not in st.session_state:
+                st.session_state[widget_key] = level
+
+
+def _render_feature_level_control(feature_name):
+    """渲染单个特征的 1-5 级滑块和可直接输入的等级框。"""
+    label = f"{feature_name}（{FEATURE_ATTRIBUTES.get(feature_name, '')}）"
+    slider_col, input_col = st.columns(
+        [4.7, 1.3],
+        vertical_alignment="bottom",
+    )
+    with slider_col:
+        st.slider(
+            label,
+            min_value=1,
+            max_value=5,
+            step=1,
+            help=create_feature_tooltip(feature_name),
+            key=f"lvl_slider_{feature_name}",
+            on_change=_on_feature_level_slider_change,
+            args=(feature_name,),
+        )
+    with input_col:
+        st.number_input(
+            "等级",
+            min_value=1,
+            max_value=5,
+            step=1,
+            help="也可直接输入 1-5：1 无，2 轻，3 中，4 重，5 极重。",
+            key=f"lvl_input_{feature_name}",
+            on_change=_on_feature_level_input_change,
+            args=(feature_name,),
+        )
+    return _normalize_feature_level(
+        st.session_state.get(f"lvl_slider_{feature_name}", DEFAULT_FEATURE_LEVEL)
+    )
 
 
 def _schedule_scroll_to_top():
@@ -2281,7 +2608,8 @@ def render_diagnosis():
 
     # ========== 输入区域 ==========
     feature_inputs = _current_feature_inputs()
-    _restore_slider_widget_state(feature_inputs)
+    feature_levels = _current_feature_levels()
+    _restore_feature_level_widget_state(feature_inputs)
     if current_module == "input":
         st.markdown('<div id="feature-input"></div>', unsafe_allow_html=True)
         selected_case = st.session_state.get("selected_case", "手动输入特征")
@@ -2292,8 +2620,17 @@ def render_diagnosis():
             c_intro, c_demo = st.columns([4, 1])
             with c_intro:
                 st.caption(
-                    "评分范围 0 = 无 / 1 = 极重；每项鼠标悬停可查看中医诊断学释义。"
-                    "分析后仍可修改并重新生成结果。"
+                    "每项按 1-5 级采集：1 无、2 轻、3 中、4 重、5 极重。"
+                    "可滑动选择，也可直接输入等级；分析后仍可修改并重新生成结果。"
+                )
+                st.markdown(
+                    '<div class="feature-level-legend">'
+                    + "".join(
+                        f"<span><b>{level}</b>{label}</span>"
+                        for level, label in FEATURE_LEVEL_LABELS.items()
+                    )
+                    + "</div>",
+                    unsafe_allow_html=True,
                 )
                 st.markdown(
                     '<div class="privacy-note">🔒 系统已脱敏处理，保护患者隐私，符合教学伦理规范。</div>',
@@ -2315,33 +2652,22 @@ def render_diagnosis():
             with col_clinical_1:
                 st.markdown("#### 🩺 临床症状 · 1/2")
                 for fn in clinical_features[:6]:
-                    label = f"{fn}（{FEATURE_ATTRIBUTES.get(fn, '')}）"
-                    feature_inputs[fn] = st.slider(
-                        label, min_value=0.0, max_value=1.0, step=0.05,
-                        help=create_feature_tooltip(fn),
-                        key=f"sld_{fn}",
-                    )
+                    feature_levels[fn] = _render_feature_level_control(fn)
+                    feature_inputs[fn] = _level_to_feature_value(feature_levels[fn])
 
             with col_clinical_2:
                 st.markdown("#### 🩺 临床症状 · 2/2")
                 for fn in clinical_features[6:]:
-                    label = f"{fn}（{FEATURE_ATTRIBUTES.get(fn, '')}）"
-                    feature_inputs[fn] = st.slider(
-                        label, min_value=0.0, max_value=1.0, step=0.05,
-                        help=create_feature_tooltip(fn),
-                        key=f"sld_{fn}",
-                    )
+                    feature_levels[fn] = _render_feature_level_control(fn)
+                    feature_inputs[fn] = _level_to_feature_value(feature_levels[fn])
 
             with col_tongue:
                 st.markdown("#### 👅 舌象与脉象（3 项）")
                 for fn in FEATURE_GROUPS['舌脉特征']:
-                    label = f"{fn}（{FEATURE_ATTRIBUTES.get(fn, '')}）"
-                    feature_inputs[fn] = st.slider(
-                        label, min_value=0.0, max_value=1.0, step=0.05,
-                        help=create_feature_tooltip(fn),
-                        key=f"sld_{fn}",
-                    )
+                    feature_levels[fn] = _render_feature_level_control(fn)
+                    feature_inputs[fn] = _level_to_feature_value(feature_levels[fn])
 
+            st.session_state.feature_levels = feature_levels
             for fn in FEATURE_NAMES:
                 st.session_state.feature_values[fn] = feature_inputs[fn]
 
@@ -2564,11 +2890,11 @@ def render_diagnosis():
                     except Exception:
                         pass
 
-    if current_module == "knowledge":
+    if current_module == "formula":
         with st.container():
             render_result_module_header(
-                "module-knowledge", "03", "📚", "方剂与调摄",
-                "仅展示经典方剂知识和调摄思路，不提供临床剂量。",
+                "module-formula", "03", "📜", "经典方剂溯源与方义推演",
+                "展示经典方剂源流、组方思路与药味释义，不提供临床剂量。",
             )
             st.warning("本系统仅展示经典方剂知识，不提供临床剂量，严禁照方抓药")
             formula_info = treatment.get("formula", {})
@@ -2576,6 +2902,15 @@ def render_diagnosis():
                 st.markdown(f'<div class="section-title">📜 经典方剂溯源（{pred_s}证）</div>', unsafe_allow_html=True)
                 st.markdown(f"""<div class="formula-title">经典方剂：{formula_info.get('name', '')}</div>""", unsafe_allow_html=True)
                 st.markdown(f"""<div style="font-size:0.88rem;color:#5d4037;margin-bottom:14px;">🕮 出处：{formula_info.get('source', '')}</div>""", unsafe_allow_html=True)
+                rationale = formula_info.get("rationale", "")
+                if rationale:
+                    st.markdown(
+                        '<div class="formula-rationale">'
+                        '<div class="formula-rationale-title">【方义推演】</div>'
+                        f'{html.escape(rationale)}'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
                 st.markdown('<div style="font-size:0.9rem;color:#4e342e;font-weight:700;margin-bottom:8px;">◆ 经典方剂组成（药材名录，不含剂量）</div>', unsafe_allow_html=True)
                 st.caption("点击药名可查看该药味的教学释义，不提供剂量与用法。")
                 herbs = list(formula_info.get('herbs', []))
@@ -2603,43 +2938,71 @@ def render_diagnosis():
                 for item in treatment.get('addition_subtraction', []):
                     st.markdown(f'<div class="care-item"><span class="care-icon">▸</span><span>{item}</span></div>', unsafe_allow_html=True)
 
-            with st.container(border=True):
-                st.markdown('<div class="section-title">🏡 生活调摄与饮食宜忌</div>', unsafe_allow_html=True)
-                lifes = treatment.get('lifestyle', [])
-                cols = st.columns(min(len(lifes), 4)) if lifes else []
-                for i, life in enumerate(lifes):
-                    with cols[i % len(cols)]:
-                        icons = ['🍽️', '🏃', '🧘', '😴']
-                        top_colors = ['#ffb74d', '#81c784', '#64b5f6', '#ba68c8']
-                        title_colors = ['#e65100', '#2e7d32', '#1565c0', '#6a1b9a']
-                        icon_bgs = ['linear-gradient(135deg,#fff5e6 0%,#ffe0b2 100%)',
-                                    'linear-gradient(135deg,#e8f5e9 0%,#c8e6c9 100%)',
-                                    'linear-gradient(135deg,#e3f2fd 0%,#bbdefb 100%)',
-                                    'linear-gradient(135deg,#f3e5f5 0%,#e1bee7 100%)']
-                        parts = life.split("：", 1)
-                        title, desc = (parts[0], parts[1]) if len(parts) == 2 else ("调摄建议", life)
+    if current_module == "care":
+        with st.container():
+            render_result_module_header(
+                "module-care", "04", "🌿", "辨证施护与起居调摄推演",
+                "从运动、施膳、情志与起居四个方面推演中医调护思路。",
+            )
+            care_theory = treatment.get("care_theory", [])
+            icons = ['🏃', '🍽️', '🧘', '🌙']
+            top_colors = ['#81c784', '#ffb74d', '#64b5f6', '#ba68c8']
+            title_colors = ['#2e7d32', '#e65100', '#1565c0', '#6a1b9a']
+            icon_bgs = [
+                'linear-gradient(135deg,#e8f5e9 0%,#c8e6c9 100%)',
+                'linear-gradient(135deg,#fff5e6 0%,#ffe0b2 100%)',
+                'linear-gradient(135deg,#e3f2fd 0%,#bbdefb 100%)',
+                'linear-gradient(135deg,#f3e5f5 0%,#e1bee7 100%)',
+            ]
+            for row_start in range(0, len(care_theory), 2):
+                cols = st.columns(2)
+                for col_index, item_index in enumerate(
+                    range(row_start, min(row_start + 2, len(care_theory)))
+                ):
+                    item = care_theory[item_index]
+                    color_index = item_index % 4
+                    icon = html.escape(str(item.get("icon", icons[color_index])))
+                    title = html.escape(str(item.get("title", "调护推演")))
+                    desc = html.escape(str(item.get("text", "")))
+                    with cols[col_index]:
                         st.markdown(f"""
                         <div style="background:linear-gradient(180deg,#ffffff 0%,#fefefe 100%);
-                                    padding:18px 18px 16px 18px;
+                                    padding:20px 20px 18px 20px;
                                     border-radius:12px;
-                                    border-top:4px solid {top_colors[i%4]};
+                                    border-top:4px solid {top_colors[color_index]};
                                     height:100%;
                                     margin:6px 0 14px 0;
                                     box-shadow:0 3px 10px rgba(16,42,18,0.05), 0 1px 2px rgba(16,42,18,0.03);">
-                          <div style="font-size:1.75rem;margin-bottom:6px;
-                                      width:40px;height:40px;display:flex;align-items:center;justify-content:center;
-                                      border-radius:10px;background:{icon_bgs[i%4]};">
-                            {icons[i%4]}
+                          <div style="font-size:1.75rem;margin-bottom:8px;
+                                      width:42px;height:42px;display:flex;align-items:center;justify-content:center;
+                                      border-radius:10px;background:{icon_bgs[color_index]};">
+                            {icon}
                           </div>
-                          <div style="font-weight:750;color:{title_colors[i%4]};margin-bottom:6px;font-size:0.98rem;">{title}</div>
-                          <div style="font-size:0.86rem;color:#5d4037;line-height:1.8;word-break:break-word;">{desc}</div>
+                          <div style="font-weight:750;color:{title_colors[color_index]};margin-bottom:8px;font-size:1rem;">{title}</div>
+                          <div style="font-size:0.9rem;color:#4e342e;line-height:1.9;word-break:break-word;">{desc}</div>
                         </div>
                         """, unsafe_allow_html=True)
+
+            reflection = treatment.get("reflection", {})
+            if reflection:
+                with st.container(border=True):
+                    st.markdown('<div class="section-title">💭 课堂思考与教学提示</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        '<div style="padding:16px 18px;background:linear-gradient(135deg,#f7fbf5 0%,#eef7ee 100%);'
+                        'border-left:4px solid #66bb6a;border-radius:10px;color:#2f4f34;'
+                        'font-size:0.92rem;line-height:1.9;margin-bottom:10px;">'
+                        f'{html.escape(str(reflection.get("question", "")))}'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                    with st.expander("查看教学提示"):
+                        st.markdown(str(reflection.get("hint", "")))
+                    st.caption("本互动仅用于课堂病机推演，不构成诊疗建议。")
 
     if current_module == "ai":
         with st.container():
             render_result_module_header(
-                "module-ai", "04", "🧠", "AI 解读与报告",
+                "module-ai", "05", "🧠", "AI 解读与报告",
                 "结合中医理论解读病机，并可导出本病例教学分析报告。",
             )
             render_ai_interpretation(feature_inputs, probs, shap_dict, pred_s)
